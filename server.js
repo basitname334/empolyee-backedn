@@ -37,12 +37,14 @@ connectDB();
 const app = express();
 const server = http.createServer(app);
 
-const allowedOrigins = ['http://localhost:3000', 'https://emp-health-frontend.vercel.app/'];
+const allowedOrigins = ['http://localhost:3000', 'https://emp-health-frontend.vercel.app'];
 app.use(cors({
   origin: (origin, callback) => {
-    if (!origin || allowedOrigins.includes(origin)) {
+    console.log('Request Origin:', origin); // Debug the origin
+    if (!origin || allowedOrigins.includes(origin) || /^https:\/\/emp-health-frontend-.*\.vercel\.app$/.test(origin)) {
       callback(null, true);
     } else {
+      console.error('CORS Error: Origin not allowed:', origin);
       callback(new Error('Not allowed by CORS'));
     }
   },
@@ -114,7 +116,7 @@ app.post('/api/report', auth, validateRequest, async (req, res) => {
       involvedParties = [];
     }
 
-       const allowedTypes = ['hazard', 'safety', 'incident']; 
+    const allowedTypes = ['hazard', 'safety', 'incident'];
 
     const missingFields = [];
     if (!title) missingFields.push('title');
@@ -284,8 +286,17 @@ app.use((err, req, res, next) => {
 
 const io = new Server(server, {
   cors: {
-    origin: allowedOrigins,
-    methods: ['GET', 'POST']
+    origin: (origin, callback) => {
+      console.log('Socket.IO Request Origin:', origin); // Debug Socket.IO origin
+      if (!origin || allowedOrigins.includes(origin) || /^https:\/\/emp-health-frontend-.*\.vercel\.app$/.test(origin)) {
+        callback(null, true);
+      } else {
+        console.error('Socket.IO CORS Error: Origin not allowed:', origin);
+        callback(new Error('Not allowed by CORS'));
+      }
+    },
+    methods: ['GET', 'POST'],
+    credentials: true
   }
 });
 
