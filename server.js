@@ -37,7 +37,7 @@ connectDB();
 const app = express();
 const server = http.createServer(app);
 
-const allowedOrigins = ['http://localhost:3000', 'https://e-health-xi.vercel.app'];
+const allowedOrigins = ['http://localhost:3000', 'https://emp-health-frontend.vercel.app/'];
 app.use(cors({
   origin: (origin, callback) => {
     if (!origin || allowedOrigins.includes(origin)) {
