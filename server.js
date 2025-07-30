@@ -74,6 +74,57 @@ app.get('/api/challenges', (req, res) => {
   res.status(200).json({ message: 'Challenges endpoint', challenges: [] });
 });
 
+
+
+// Backend: routes/auth.js (or wherever the endpoint is defined)
+app.post('/:userId/schedule', async (req, res) => {
+  try {
+    const { date, startTime, endTime, breaks } = req.body; // Destructure directly from req.body
+    console.log('Received schedule data:', { date, startTime, endTime, breaks }); // Log incoming data
+
+    // Validate input data
+    if (!date || !startTime || !endTime) {
+      return res.status(400).json({ message: 'Date, start time, and end time are required' });
+    }
+
+    const user = await User.findById(req.params.userId);
+    if (!user) return res.status(404).json({ message: 'User not found' });
+
+    if (user.role !== 'doctor') {
+      return res.status(403).json({ message: 'Only doctors can update schedules' });
+    }
+
+    // Prepare the update object
+    const updateData = {
+      workingHours: {
+        start: startTime,
+        end: endTime,
+        breaks: breaks || [],
+      },
+      $push: {
+        schedule: {
+          date,
+          startTime,
+          endTime,
+          breaks: breaks || [],
+        },
+      },
+    };
+
+    // Update the user document without running full validation
+    await User.findByIdAndUpdate(
+      req.params.userId,
+      updateData,
+      { new: true, runValidators: false } // Disable validation for this update
+    );
+
+    res.status(200).json({ message: 'Schedule updated successfully' });
+  } catch (error) {
+    console.error('Error in schedule update:', error);
+    res.status(500).json({ message: error.message });
+  }
+});
+
 app.get('/api/reports/all', auth, async (req, res) => {
   try {
     console.log('GET /api/reports/all - User:', req.user);

@@ -23,13 +23,12 @@ exports.register = async (req, res) => {
     } = req.body;
 
     // Input validation
-  if (!name || !email || !password || !role ) {
-  return res.status(400).json({ 
-    success: false,
-    message: 'Please provide name, email, password, and role' 
-  });
-}
-
+    if (!name || !email || !password || !role) {
+      return res.status(400).json({ 
+        success: false,
+        message: 'Please provide name, email, password, and role' 
+      });
+    }
 
     // Check if user already exists
     const existingUser = await User.findOne({ email: email.toLowerCase() });
@@ -52,7 +51,7 @@ exports.register = async (req, res) => {
       name,
       email: email.toLowerCase(),
       password: hashedPassword,
-      role: role,
+      role,
       number,
       emailVerificationOTP: otp,
       otpExpiry,
@@ -63,6 +62,13 @@ exports.register = async (req, res) => {
     
     await user.save();
     
+    // Generate JWT token after user is saved
+    const token = jwt.sign(
+      { userId: user._id, role: user.role },
+      process.env.JWT_SECRET,
+      { expiresIn: '1d' }
+    );
+
     // Send verification email
     const emailSent = await sendOTPEmail(email, otp);
     
@@ -72,18 +78,19 @@ exports.register = async (req, res) => {
     
     res.status(201).json({
       success: true,
+      token,
       message: 'Registration initiated. Please verify your email with the OTP sent.',
       user: {
-      id: user._id,
-      name: user.name,
-      email: user.email,
-      role: user.role,
-      number: user.number,
-      experience: user.experience,
-      department: user.department,
-      education: user.education,
-      isEmailVerified: user.isEmailVerified,
-      agreementAccepted: user.agreementAccepted
+        id: user._id,
+        name: user.name,
+        email: user.email,
+        role: user.role,
+        number: user.number,
+        experience: user.experience,
+        department: user.department,
+        education: user.education,
+        isEmailVerified: user.isEmailVerified,
+        agreementAccepted: user.agreementAccepted
       }
     });
   } catch (error) {

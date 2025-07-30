@@ -46,7 +46,6 @@ const UserSchema = new mongoose.Schema({
     },
     validate: {
       validator: function(value) {
-        // Only validate if role is doctor
         if (this.role === 'doctor') {
           return value && value.trim().length > 0;
         }
@@ -78,7 +77,6 @@ const UserSchema = new mongoose.Schema({
     },
     validate: {
       validator: function(value) {
-        // Only validate if role is doctor
         if (this.role === 'doctor') {
           return value && value.trim().length > 0;
         }
@@ -96,7 +94,6 @@ const UserSchema = new mongoose.Schema({
     },
     validate: {
       validator: function(value) {
-        // Only validate if role is doctor
         if (this.role === 'doctor') {
           return value && value.trim().length > 0;
         }
@@ -126,16 +123,26 @@ const UserSchema = new mongoose.Schema({
     }
   }],
   
-  workingHours: {
-    start: {
-      type: String, // Format: "09:00"
-      default: "09:00"
-    },
-    end: {
-      type: String, // Format: "17:00"
-      default: "17:00"
-    }
+workingHours: {
+  start: {
+    type: String,
+    default: "09:00"
   },
+  end: {
+    type: String,
+    default: "17:00"
+  },
+  breaks: [{
+    startTime: {
+      type: String,
+      required: true
+    },
+    endTime: {
+      type: String,
+      required: true
+    }
+  }]
+}
   
   consultationFee: {
     type: Number,
@@ -147,6 +154,37 @@ const UserSchema = new mongoose.Schema({
     type: Boolean,
     default: true
   },
+  
+  schedule: [{
+    date: {
+      type: Date,
+      required: function() {
+        return this.role === 'doctor';
+      }
+    },
+    startTime: {
+      type: String, // Format: "HH:MM" e.g., "09:00"
+      required: function() {
+        return this.role === 'doctor';
+      }
+    },
+    endTime: {
+      type: String, // Format: "HH:MM" e.g., "17:00"
+      required: function() {
+        return this.role === 'doctor';
+      }
+    },
+    breaks: [{
+      startTime: {
+        type: String, // Format: "HH:MM" e.g., "12:00"
+        required: true
+      },
+      endTime: {
+        type: String, // Format: "HH:MM" e.g., "13:00"
+        required: true
+      }
+    }]
+  }],
   
   // End of doctor-specific fields
   
@@ -204,6 +242,7 @@ UserSchema.pre('save', function(next) {
     this.workingHours = undefined;
     this.consultationFee = undefined;
     this.isAvailable = undefined;
+    this.schedule = undefined;
   }
   next();
 });
@@ -226,7 +265,8 @@ UserSchema.virtual('doctorProfile').get(function() {
       qualifications: this.qualifications,
       workingHours: this.workingHours,
       consultationFee: this.consultationFee,
-      isAvailable: this.isAvailable
+      isAvailable: this.isAvailable,
+      schedule: this.schedule
     };
   }
   return null;

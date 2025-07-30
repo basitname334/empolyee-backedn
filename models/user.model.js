@@ -126,16 +126,26 @@ const UserSchema = new mongoose.Schema({
     }
   }],
   
-  workingHours: {
-    start: {
-      type: String, // Format: "09:00"
-      default: "09:00"
-    },
-    end: {
-      type: String, // Format: "17:00"
-      default: "17:00"
-    }
+ workingHours: {
+  start: {
+    type: String,
+    default: "09:00"
   },
+  end: {
+    type: String,
+    default: "17:00"
+  },
+  breaks: [{
+    startTime: {
+      type: String,
+      required: true
+    },
+    endTime: {
+      type: String,
+      required: true
+    }
+  }]
+},
   
   consultationFee: {
     type: Number,
