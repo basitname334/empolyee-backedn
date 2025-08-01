@@ -6,6 +6,8 @@ const UserSchema = new mongoose.Schema({
     required: true,
     trim: true
   },
+   resetPasswordToken: String,
+    resetPasswordExpires: Date,
   email: { 
     type: String, 
     required: true, 
@@ -146,7 +148,7 @@ workingHours: {
     }
   }]
 },
-  
+ 
   consultationFee: {
     type: Number,
     min: 0,

@@ -1,5 +1,9 @@
 const express = require('express');
 const router = express.Router();
+const nodemailer = require('nodemailer');
+const crypto = require('crypto');
+const bcrypt = require('bcryptjs');
+const User = require('../models/User');
 
 const { 
   register, 
@@ -11,9 +15,35 @@ const {
   acceptTerms,
   determineQuestionnaire
 } = require('../controllers/authController');
-const User = require('../models/User');
-const bcrypt = require('bcryptjs');
 
+/// Validate environment variables
+// if (!process.env.EMAIL_HOST || !process.env.EMAIL_PORT || !process.env.EMAIL_USER || !process.env.EMAIL_PASSWORD) {
+//   console.error('Missing required email environment variables');
+//   process.exit(1);
+// }
+
+// Email configuration
+const transporter = nodemailer.createTransport({
+  host: process.env.EMAIL_HOST,
+  port: parseInt(process.env.EMAIL_PORT || '587'),
+  secure: process.env.EMAIL_PORT === '465', // true for 465 (SSL), false for 587 (TLS)
+  auth: {
+    user: process.env.EMAIL_USER,
+    pass: process.env.EMAIL_PASSWORD,
+  },
+  tls: {
+    rejectUnauthorized: false, // For development only
+  },
+});
+
+// Verify transporter configuration
+transporter.verify((error, success) => {
+  if (error) {
+    console.error('SMTP configuration error:', error);
+  } else {
+    console.log('SMTP server is ready to send emails');
+  }
+});
 // -------------------
 // Public Routes
 // -------------------
@@ -22,32 +52,97 @@ router.post('/register', register);
 router.post('/login', login);
 router.post('/verify-otp', verifyOTP);
 router.post('/resend-otp', resendOTP);
-router.post('/forget-password', async (req, res) => {
-  try {
-    const { email, currentPassword, newPassword } = req.body;
 
-    if (!email || !currentPassword || !newPassword) {
-      return res.status(400).json({ 
+// Forgot Password
+router.post('/forgot-password', async (req, res) => {
+  try {
+    const { email } = req.body;
+
+    if (!email) {
+      return res.status(400).json({
         success: false,
-        message: 'Email, currentPassword, and newPassword are required' 
+        message: 'Email is required',
       });
     }
 
-    // Find user by email (case-insensitive)
     const user = await User.findOne({ email: email.toLowerCase() });
     if (!user) {
-      return res.status(404).json({ 
+      return res.status(404).json({
         success: false,
-        message: 'User not found' 
+        message: 'User not found',
       });
     }
 
-    // Verify current password
-    const isMatch = await bcrypt.compare(currentPassword, user.password);
-    if (!isMatch) {
+    // Generate reset token
+    const resetToken = crypto.randomBytes(32).toString('hex');
+    const resetTokenHash = crypto
+      .createHash('sha256')
+      .update(resetToken)
+      .digest('hex');
+
+    // Set token and expiry on user
+    user.resetPasswordToken = resetTokenHash;
+    user.resetPasswordExpires = new Date(Date.now() + 3600000); // 1 hour expiry
+    await user.save();
+
+    // Send reset email
+    const resetUrl = `http://localhost:3000/reset-password/${resetToken}`;
+    const mailOptions = {
+      from: `"Your App Name" <${process.env.EMAIL_USER}>`,
+      to: email,
+      subject: 'Password Reset Request',
+      html: `
+        <h2>Password Reset Request</h2>
+        <p>You requested a password reset. Click the link below to reset your password:</p>
+        <a href="${resetUrl}">Reset Password</a>
+        <p>This link will expire in 1 hour.</p>
+        <p>If you didn't request this, please ignore this email.</p>
+      `,
+    };
+
+    await transporter.sendMail(mailOptions);
+
+    res.status(200).json({
+      success: true,
+      message: 'Password reset link sent to email',
+    });
+  } catch (error) {
+    console.error('Error in forgot password:', error.message, error.stack);
+    res.status(500).json({
+      success: false,
+      message: 'Server error',
+      error: error.message, // Include error details for debugging
+    });
+  }
+});
+
+// Reset Password
+router.post('/reset-password/:token', async (req, res) => {
+  try {
+    const { token } = req.params;
+    const { newPassword } = req.body;
+
+    if (!newPassword) {
       return res.status(400).json({ 
         success: false,
-        message: 'Current password is incorrect' 
+        message: 'New password is required' 
+      });
+    }
+
+    const resetTokenHash = crypto
+      .createHash('sha256')
+      .update(token)
+      .digest('hex');
+
+    const user = await User.findOne({
+      resetPasswordToken: resetTokenHash,
+      resetPasswordExpires: { $gt: Date.now() }
+    });
+
+    if (!user) {
+      return res.status(400).json({ 
+        success: false,
+        message: 'Invalid or expired reset token' 
       });
     }
 
@@ -63,7 +158,62 @@ router.post('/forget-password', async (req, res) => {
     const salt = await bcrypt.genSalt(10);
     const hashedPassword = await bcrypt.hash(newPassword, salt);
 
-    // Update password
+    // Update user
+    user.password = hashedPassword;
+    user.resetPasswordToken = undefined;
+    user.resetPasswordExpires = undefined;
+    await user.save();
+
+    res.status(200).json({ 
+      success: true,
+      message: 'Password reset successfully' 
+    });
+  } catch (error) {
+    console.error('Error resetting password:', error);
+    res.status(500).json({ 
+      success: false,
+      message: 'Server error' 
+    });
+  }
+});
+
+router.post('/change-password', async (req, res) => {
+  try {
+    const { email, currentPassword, newPassword } = req.body;
+
+    if (!email || !currentPassword || !newPassword) {
+      return res.status(400).json({ 
+        success: false,
+        message: 'Email, currentPassword, and newPassword are required' 
+      });
+    }
+
+    const user = await User.findOne({ email: email.toLowerCase() });
+    if (!user) {
+      return res.status(404).json({ 
+        success: false,
+        message: 'User not found' 
+      });
+    }
+
+    const isMatch = await bcrypt.compare(currentPassword, user.password);
+    if (!isMatch) {
+      return res.status(400).json({ 
+        success: false,
+        message: 'Current password is incorrect' 
+      });
+    }
+
+    if (newPassword.length < 8) {
+      return res.status(400).json({ 
+        success: false,
+        message: 'New password must be at least 8 characters long' 
+      });
+    }
+
+    const salt = await bcrypt.genSalt(10);
+    const hashedPassword = await bcrypt.hash(newPassword, salt);
+
     user.password = hashedPassword;
     await user.save();
 
@@ -79,9 +229,6 @@ router.post('/forget-password', async (req, res) => {
     });
   }
 });
-
-
-
 
 router.post('/store_socket_id', async (req, res) => {
   try {
@@ -126,7 +273,6 @@ router.post('/store_socket_id', async (req, res) => {
   }
 });
 
-// Fetch online users
 router.get('/online-users', async (req, res) => {
   try {
     const onlineUsers = await User.find({ isOnline: true, role: 'user' }, '_id socketId role');
@@ -144,7 +290,7 @@ router.get('/online-users', async (req, res) => {
     });
   }
 });
-// Backend: routes/auth.js
+
 router.post('/leave', async (req, res) => {
   try {
     const { userId } = req.body;
@@ -187,7 +333,7 @@ router.post('/leave', async (req, res) => {
     });
   }
 });
-// Fetch online doctors
+
 router.get('/online-doctors', async (req, res) => {
   try {
     const onlineDoctors = await User.find({ isOnline: true, role: 'doctor' }, '_id socketId role');
@@ -205,7 +351,7 @@ router.get('/online-doctors', async (req, res) => {
     });
   }
 });
-// Optional: Fallback GET for /login to prevent 404s from browser misfires
+
 router.get('/login', (req, res) => {
   res.status(400).json({ 
     success: false,
@@ -213,14 +359,9 @@ router.get('/login', (req, res) => {
   });
 });
 
-// Test route for health check
 router.get('/test', (req, res) => {
   res.status(200).json({ message: 'Auth test route working' });
 });
-
-// -------------------
-// Debug Registered Routes (for dev only)
-// -------------------
 
 if (process.env.NODE_ENV !== 'production') {
   console.log('✅ Auth routes registered:');
