@@ -4,7 +4,7 @@ const nodemailer = require('nodemailer');
 const crypto = require('crypto');
 const bcrypt = require('bcryptjs');
 const User = require('../models/User');
-
+const validator = require('validator');
 const { 
   register, 
   login, 
@@ -15,7 +15,7 @@ const {
   acceptTerms,
   determineQuestionnaire
 } = require('../controllers/authController');
-
+require('dotenv').config();
 /// Validate environment variables
 // if (!process.env.EMAIL_HOST || !process.env.EMAIL_PORT || !process.env.EMAIL_USER || !process.env.EMAIL_PASSWORD) {
 //   console.error('Missing required email environment variables');
@@ -23,16 +23,18 @@ const {
 // }
 
 // Email configuration
+// Configure Nodemailer transporter (example for Gmail)
 const transporter = nodemailer.createTransport({
-  host: process.env.EMAIL_HOST,
-  port: parseInt(process.env.EMAIL_PORT || '587'),
-  secure: process.env.EMAIL_PORT === '465', // true for 465 (SSL), false for 587 (TLS)
+  service: 'gmail', // Use 'smtp' for custom SMTP server
+  host: process.env.SMTP_HOST || 'smtp.gmail.com',
+  port: process.env.SMTP_PORT || 587,
+  secure: false, // true for 465, false for 587 with STARTTLS
   auth: {
-    user: process.env.EMAIL_USER,
-    pass: process.env.EMAIL_PASSWORD,
+    user: process.env.EMAIL_USER, // e.g., 'halfmina368@gmail.com'
+    pass: process.env.EMAIL_PASSWORD, // App-specific password for Gmail
   },
   tls: {
-    rejectUnauthorized: false, // For development only
+    rejectUnauthorized: false, // For development; remove in production
   },
 });
 
@@ -54,24 +56,42 @@ router.post('/verify-otp', verifyOTP);
 router.post('/resend-otp', resendOTP);
 
 // Forgot Password
+// Forgot Password
+
+
+
+// Verify transporter configuration
+transporter.verify((error, success) => {
+  if (error) {
+    console.error('SMTP Transporter Error:', error);
+  } else {
+    console.log('SMTP Transporter is ready');
+  }
+});
+
+// Forgot Password
 router.post('/forgot-password', async (req, res) => {
   try {
     const { email } = req.body;
 
-    if (!email) {
+    // Validate email
+    if (!email || !validator.isEmail(email)) {
       return res.status(400).json({
         success: false,
-        message: 'Email is required',
+        message: 'Please provide a valid email address',
       });
     }
 
-    const user = await User.findOne({ email: email.toLowerCase() });
-    if (!user) {
-      return res.status(404).json({
-        success: false,
-        message: 'User not found',
-      });
-    }
+    const user = await User.findOne({ email: email.toLowerCase().trim() });
+    
+    // Prevent email enumeration
+  if (!user) {
+  return res.status(404).json({
+    success: false,
+    message: 'No account found with that email',
+  });
+}
+
 
     // Generate reset token
     const resetToken = crypto.randomBytes(32).toString('hex');
@@ -85,33 +105,55 @@ router.post('/forgot-password', async (req, res) => {
     user.resetPasswordExpires = new Date(Date.now() + 3600000); // 1 hour expiry
     await user.save();
 
-    // Send reset email
-    const resetUrl = `http://localhost:3000/reset-password/${resetToken}`;
+    // Use environment variable for frontend URL
+    const frontendUrl = process.env.FRONTEND_URL || 'http://localhost:3000';
+    const resetUrl = `${frontendUrl}/reset-password/${resetToken}`;
+
     const mailOptions = {
-      from: `"Your App Name" <${process.env.EMAIL_USER}>`,
+      from: `"${process.env.APP_NAME || 'Employee Health'}" <${process.env.EMAIL_USER}>`,
       to: email,
       subject: 'Password Reset Request',
       html: `
-        <h2>Password Reset Request</h2>
-        <p>You requested a password reset. Click the link below to reset your password:</p>
-        <a href="${resetUrl}">Reset Password</a>
-        <p>This link will expire in 1 hour.</p>
-        <p>If you didn't request this, please ignore this email.</p>
+        <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; padding: 20px;">
+          <h2 style="color: #2563eb;">Password Reset Request</h2>
+          <p>You requested a password reset for your account. Click the button below to reset your password:</p>
+          <div style="text-align: center; margin: 30px 0;">
+            <a href="${resetUrl}" 
+               style="background-color: #2563eb; color: white; padding: 12px 30px; 
+                      text-decoration: none; border-radius: 5px; display: inline-block;">
+              Reset Password
+            </a>
+          </div>
+          <p style="color: #666;">This link will expire in 1 hour.</p>
+          <p style="color: #666;">If you didn't request this, please ignore this email and your password will remain unchanged.</p>
+          <hr style="margin: 30px 0; border: none; border-top: 1px solid #eee;">
+          <p style="color: #999; font-size: 12px;">
+            If the button doesn't work, copy and paste this link into your browser:<br>
+            <a href="${resetUrl}">${resetUrl}</a>
+          </p>
+        </div>
       `,
     };
 
-    await transporter.sendMail(mailOptions);
+    try {
+      await transporter.sendMail(mailOptions);
+    } catch (emailError) {
+      console.error('Email sending failed:', emailError);
+      return res.status(500).json({
+        success: false,
+        message: 'Failed to send reset email. Please try again later.',
+      });
+    }
 
     res.status(200).json({
       success: true,
-      message: 'Password reset link sent to email',
+      message: 'If an account with that email exists, a password reset link has been sent',
     });
   } catch (error) {
     console.error('Error in forgot password:', error.message, error.stack);
     res.status(500).json({
       success: false,
-      message: 'Server error',
-      error: error.message, // Include error details for debugging
+      message: 'Server error. Please try again later.',
     });
   }
 });
@@ -120,12 +162,34 @@ router.post('/forgot-password', async (req, res) => {
 router.post('/reset-password/:token', async (req, res) => {
   try {
     const { token } = req.params;
-    const { newPassword } = req.body;
+    const { newPassword, confirmPassword } = req.body;
 
-    if (!newPassword) {
+    // Validate inputs
+    if (!newPassword || !confirmPassword) {
       return res.status(400).json({ 
         success: false,
-        message: 'New password is required' 
+        message: 'Both password fields are required' 
+      });
+    }
+
+    if (newPassword !== confirmPassword) {
+      return res.status(400).json({ 
+        success: false,
+        message: 'Passwords do not match' 
+      });
+    }
+
+    // Enhanced password validation
+    if (!validator.isStrongPassword(newPassword, {
+      minLength: 8,
+      minLowercase: 1,
+      minUppercase: 1,
+      minNumbers: 1,
+      minSymbols: 1,
+    })) {
+      return res.status(400).json({ 
+        success: false,
+        message: 'Password must be at least 8 characters long and contain at least one uppercase letter, one lowercase letter, one number, and one special character' 
       });
     }
 
@@ -146,37 +210,38 @@ router.post('/reset-password/:token', async (req, res) => {
       });
     }
 
-    // Validate new password
-    if (newPassword.length < 8) {
+    // Check if new password is same as current password
+    const isSamePassword = await bcrypt.compare(newPassword, user.password);
+    if (isSamePassword) {
       return res.status(400).json({ 
         success: false,
-        message: 'New password must be at least 8 characters long' 
+        message: 'New password must be different from your current password' 
       });
     }
 
     // Hash new password
-    const salt = await bcrypt.genSalt(10);
+    const salt = await bcrypt.genSalt(12);
     const hashedPassword = await bcrypt.hash(newPassword, salt);
 
     // Update user
     user.password = hashedPassword;
     user.resetPasswordToken = undefined;
     user.resetPasswordExpires = undefined;
+    user.passwordChangedAt = new Date();
     await user.save();
 
     res.status(200).json({ 
       success: true,
-      message: 'Password reset successfully' 
+      message: 'Password reset successfully. You can now login with your new password.' 
     });
   } catch (error) {
     console.error('Error resetting password:', error);
     res.status(500).json({ 
       success: false,
-      message: 'Server error' 
+      message: 'Server error. Please try again later.' 
     });
   }
 });
-
 router.post('/change-password', async (req, res) => {
   try {
     const { email, currentPassword, newPassword } = req.body;
