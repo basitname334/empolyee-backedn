@@ -103,8 +103,7 @@ router.post('/forgot-password', async (req, res) => {
     // Set token and expiry on user
     user.resetPasswordToken = resetTokenHash;
     user.resetPasswordExpires = new Date(Date.now() + 3600000); // 1 hour expiry
-    await user.save({ validateBeforeSave: false });
-
+    await user.save();
 
     // Use environment variable for frontend URL
     const frontendUrl = process.env.FRONTEND_URL || 'http://localhost:3000';
@@ -229,8 +228,7 @@ router.post('/reset-password/:token', async (req, res) => {
     user.resetPasswordToken = undefined;
     user.resetPasswordExpires = undefined;
     user.passwordChangedAt = new Date();
-    await user.save({ validateBeforeSave: false });
-
+    await user.save();
 
     res.status(200).json({ 
       success: true,
@@ -403,18 +401,11 @@ router.post('/leave', async (req, res) => {
 
 router.get('/online-doctors', async (req, res) => {
   try {
- const onlineDoctorsAndAdmins = await User.find(
-  { 
-    isOnline: true, 
-    role: { $in: ['doctor', 'admin'] } 
-  },
-  '_id socketId role'
-)
-
+    const onlineDoctors = await User.find({ isOnline: true, role: 'doctor' }, '_id socketId role');
     res.status(200).json({
       success: true,
       message: 'Online doctors fetched successfully',
-      data: onlineDoctorsAndAdmins,
+      data: onlineDoctors,
     });
   } catch (error) {
     console.error('Error fetching online doctors:', error);
@@ -425,7 +416,6 @@ router.get('/online-doctors', async (req, res) => {
     });
   }
 });
-
 
 router.get('/login', (req, res) => {
   res.status(400).json({ 
