@@ -37,19 +37,26 @@ connectDB();
 const app = express();
 const server = http.createServer(app);
 
+// CORS configuration
 const allowedOrigins = ['http://localhost:3000', 'https://emp-health-frontend.vercel.app'];
 app.use(cors({
   origin: (origin, callback) => {
-    console.log('Request Origin:', origin); // Debug the origin
+    console.log('Request Origin:', origin);
     if (!origin || allowedOrigins.includes(origin) || /^https:\/\/emp-health-frontend-.*\.vercel\.app$/.test(origin)) {
-      callback(null, true);
+      callback(null, origin); // Return the specific origin
     } else {
       console.error('CORS Error: Origin not allowed:', origin);
       callback(new Error('Not allowed by CORS'));
     }
   },
-  credentials: true
+  methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'], // Explicitly allow OPTIONS
+  allowedHeaders: ['Content-Type', 'Authorization'], // Allow necessary headers
+  credentials: true,
+  optionsSuccessStatus: 200 // Ensure 200 for OPTIONS
 }));
+
+// Explicitly handle OPTIONS requests for all routes
+app.options('*', cors()); // Handle preflight for all routes
 
 app.use(helmet());
 app.use(express.json());
@@ -74,15 +81,11 @@ app.get('/api/challenges', (req, res) => {
   res.status(200).json({ message: 'Challenges endpoint', challenges: [] });
 });
 
-
-
-// Backend: routes/auth.js (or wherever the endpoint is defined)
 app.post('/:userId/schedule', async (req, res) => {
   try {
-    const { date, startTime, endTime, breaks } = req.body; // Destructure directly from req.body
-    console.log('Received schedule data:', { date, startTime, endTime, breaks }); // Log incoming data
+    const { date, startTime, endTime, breaks } = req.body;
+    console.log('Received schedule data:', { date, startTime, endTime, breaks });
 
-    // Validate input data
     if (!date || !startTime || !endTime) {
       return res.status(400).json({ message: 'Date, start time, and end time are required' });
     }
@@ -94,7 +97,6 @@ app.post('/:userId/schedule', async (req, res) => {
       return res.status(403).json({ message: 'Only doctors can update schedules' });
     }
 
-    // Prepare the update object
     const updateData = {
       workingHours: {
         start: startTime,
@@ -111,11 +113,10 @@ app.post('/:userId/schedule', async (req, res) => {
       },
     };
 
-    // Update the user document without running full validation
     await User.findByIdAndUpdate(
       req.params.userId,
       updateData,
-      { new: true, runValidators: false } // Disable validation for this update
+      { new: true, runValidators: false }
     );
 
     res.status(200).json({ message: 'Schedule updated successfully' });
@@ -223,14 +224,15 @@ app.post('/api/appointments', auth, validateRequest, async (req, res) => {
   try {
     console.log('POST /api/appointments - Request body:', req.body, 'User:', req.user);
     const { day, date, time, type, doctorName, avatarSrc, userId } = req.body;
-    if (!day || !date || !time || !type || !doctorName || !avatarSrc || !userId) {
-      return res.status(400).json({ message: 'All fields are required including userId.' });
+    // Make avatarSrc optional
+    if (!day || !date || !time || !type || !doctorName || !userId) {
+      return res.status(400).json({ message: 'Missing required fields: day, date, time, type, doctorName, userId' });
     }
     if (!mongoose.Types.ObjectId.isValid(userId)) {
       console.error('POST /api/appointments - Invalid userId:', userId);
       return res.status(400).json({ message: 'Invalid userId format' });
     }
-    const appointment = new Appointment({ day, date, time, type, doctorName, avatarSrc, user: userId });
+    const appointment = new Appointment({ day, date, time, type, doctorName, avatarSrc: avatarSrc || '', user: userId });
     await appointment.save();
     await User.findByIdAndUpdate(userId, { $push: { appointments: appointment._id } });
     res.status(201).json({ message: 'Appointment created successfully', appointment });
@@ -338,9 +340,9 @@ app.use((err, req, res, next) => {
 const io = new Server(server, {
   cors: {
     origin: (origin, callback) => {
-      console.log('Socket.IO Request Origin:', origin); // Debug Socket.IO origin
+      console.log('Socket.IO Request Origin:', origin);
       if (!origin || allowedOrigins.includes(origin) || /^https:\/\/emp-health-frontend-.*\.vercel\.app$/.test(origin)) {
-        callback(null, true);
+        callback(null, origin);
       } else {
         console.error('Socket.IO CORS Error: Origin not allowed:', origin);
         callback(new Error('Not allowed by CORS'));
