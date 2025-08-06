@@ -29,7 +29,6 @@ const doctorRoutes = require('./routes/doctor');
 
 dotenv.config();
 
-// Debug: Log environment variables (avoid logging sensitive data in production)
 console.log('JWT_SECRET loaded:', !!process.env.JWT_SECRET);
 
 connectDB();
@@ -37,18 +36,27 @@ connectDB();
 const app = express();
 const server = http.createServer(app);
 
-const allowedOrigins = ['http://localhost:3000', 'https://emp-health-frontend.vercel.app'];
+const allowedOrigins = [
+  'http://localhost:3000',
+  'https://emp-health-frontend.vercel.app',
+  'https://*.vercel.app', // Support Vercel subdomains
+];
+
 app.use(cors({
   origin: (origin, callback) => {
-    console.log('Request Origin:', origin); // Debug the origin
-    if (!origin || allowedOrigins.includes(origin) || /^https:\/\/emp-health-frontend-.*\.vercel\.app$/.test(origin)) {
+    console.log('Request Origin:', origin);
+    if (!origin || allowedOrigins.some(allowed => 
+      allowed === origin || (allowed.includes('*') && new RegExp(allowed.replace('*', '.*')).test(origin))
+    )) {
       callback(null, true);
     } else {
       console.error('CORS Error: Origin not allowed:', origin);
       callback(new Error('Not allowed by CORS'));
     }
   },
-  credentials: true
+  credentials: true,
+  methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE'],
+  allowedHeaders: ['Content-Type', 'Authorization', 'x-auth-token'],
 }));
 
 app.use(helmet());
@@ -65,6 +73,7 @@ const validateRequest = (req, res, next) => {
 };
 
 app.get('/', (req, res) => res.send('CORS Configured!'));
+
 app.use('/api/auth', authRoutes);
 app.use('/api', challengeRoutes);
 app.use('/api', doctorRoutes);
@@ -74,15 +83,11 @@ app.get('/api/challenges', (req, res) => {
   res.status(200).json({ message: 'Challenges endpoint', challenges: [] });
 });
 
-
-
-// Backend: routes/auth.js (or wherever the endpoint is defined)
 app.post('/:userId/schedule', async (req, res) => {
   try {
-    const { date, startTime, endTime, breaks } = req.body; // Destructure directly from req.body
-    console.log('Received schedule data:', { date, startTime, endTime, breaks }); // Log incoming data
+    const { date, startTime, endTime, breaks } = req.body;
+    console.log('Received schedule data:', { date, startTime, endTime, breaks });
 
-    // Validate input data
     if (!date || !startTime || !endTime) {
       return res.status(400).json({ message: 'Date, start time, and end time are required' });
     }
@@ -94,7 +99,6 @@ app.post('/:userId/schedule', async (req, res) => {
       return res.status(403).json({ message: 'Only doctors can update schedules' });
     }
 
-    // Prepare the update object
     const updateData = {
       workingHours: {
         start: startTime,
@@ -111,11 +115,10 @@ app.post('/:userId/schedule', async (req, res) => {
       },
     };
 
-    // Update the user document without running full validation
     await User.findByIdAndUpdate(
       req.params.userId,
       updateData,
-      { new: true, runValidators: false } // Disable validation for this update
+      { new: true, runValidators: false }
     );
 
     res.status(200).json({ message: 'Schedule updated successfully' });
@@ -130,14 +133,14 @@ app.get('/api/reports/all', auth, async (req, res) => {
     console.log('GET /api/reports/all - User:', req.user);
     
     const reports = await Report.aggregate([
-      { $sort: { createdAt: -1 } }, // optional
+      { $sort: { createdAt: -1 } },
       {
         $lookup: {
           from: 'users',
           localField: 'user',
           foreignField: '_id',
-          as: 'user'
-        }
+          as: 'user',
+        },
       },
       { $unwind: '$user' },
       {
@@ -147,20 +150,18 @@ app.get('/api/reports/all', auth, async (req, res) => {
           description: 1,
           createdAt: 1,
           'user.name': 1,
-          'user.email': 1
-        }
-      }
+          'user.email': 1,
+        },
+      },
     ], { allowDiskUse: true });
 
     res.set('Cache-Control', 'no-cache');
     res.status(200).json({ reports });
-
   } catch (error) {
     console.error('Error in GET /api/reports/all:', error);
     res.status(500).json({ message: 'Failed to fetch reports', error: error.message });
   }
 });
-
 
 app.post('/api/report', auth, validateRequest, async (req, res) => {
   try {
@@ -185,7 +186,7 @@ app.post('/api/report', auth, validateRequest, async (req, res) => {
       anonymous,
       location,
       description,
-      involvedParties
+      involvedParties,
     } = req.body;
 
     if (!Array.isArray(involvedParties)) {
@@ -356,15 +357,17 @@ app.use((err, req, res, next) => {
   console.error('Global error handler:', err);
   res.status(500).json({
     message: 'Internal server error',
-    error: process.env.NODE_ENV === 'production' ? 'An error occurred' : err.message
+    error: process.env.NODE_ENV === 'production' ? 'An error occurred' : err.message,
   });
 });
 
 const io = new Server(server, {
   cors: {
     origin: (origin, callback) => {
-      console.log('Socket.IO Request Origin:', origin); // Debug Socket.IO origin
-      if (!origin || allowedOrigins.includes(origin) || /^https:\/\/emp-health-frontend-.*\.vercel\.app$/.test(origin)) {
+      console.log('Socket.IO Request Origin:', origin);
+      if (!origin || allowedOrigins.some(allowed => 
+        allowed === origin || (allowed.includes('*') && new RegExp(allowed.replace('*', '.*')).test(origin))
+      )) {
         callback(null, true);
       } else {
         console.error('Socket.IO CORS Error: Origin not allowed:', origin);
@@ -372,8 +375,10 @@ const io = new Server(server, {
       }
     },
     methods: ['GET', 'POST'],
-    credentials: true
-  }
+    credentials: true,
+  },
+  pingTimeout: 60000, // Increase timeout for cross-IP connections
+  pingInterval: 25000,
 });
 
 io.on('connection', (socket) => {
@@ -394,12 +399,12 @@ io.on('connection', (socket) => {
     io.to(to).emit('call-accepted', signal);
   });
 
-  socket.on('reject-call', ({ to }) => {
-    io.to(to).emit('call-rejected');
+  socket.on('reject-call', ({ to, callId }) => {
+    io.to(to).emit('call-rejected', { callId });
   });
 
-  socket.on('end-call', ({ to }) => {
-    io.to(to).emit('call-ended');
+  socket.on('end-call', ({ to, callId }) => {
+    io.to(to).emit('call-ended', { callId });
   });
 
   socket.on('ice-candidate', ({ candidate, to }) => {
@@ -411,7 +416,7 @@ io.on('connection', (socket) => {
   });
 
   socket.on('answer', ({ answer, to }) => {
-    io.to(to).emit('pass', { answer });
+    io.to(to).emit('answer', { answer, from: socket.id });
   });
 
   socket.on('disconnect', () => {
