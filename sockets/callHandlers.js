@@ -1,33 +1,26 @@
 const User = require('../models/User');
 const Call = require('../models/Call');
 
-const activeUsers = new Map(); // socket.id => userData
-const activeCalls = new Map(); // callId => callInfo
+const activeUsers = new Map();
+const activeCalls = new Map();
 
 function socketHandler(io) {
   io.on('connection', (socket) => {
     console.log('✅ New client connected:', socket.id);
 
-    // -------------------- User Join --------------------
     socket.on('user-joined', async (userData) => {
       try {
-        console.log('👤 User joining:', userData);
         activeUsers.set(socket.id, userData);
-
         await User.findByIdAndUpdate(userData.id, {
           isOnline: true,
           socketId: socket.id,
         });
-
-        // Send user their own info
         socket.emit('your-info', {
           id: userData.id,
           name: userData.name || userData.username || userData.email,
           role: userData.role,
           socketId: socket.id,
         });
-
-        // Send available users based on role
         if (userData.role === 'doctor') {
           const onlineEmployees = getOnlineUsersByRole('employee');
           socket.emit('available-users', onlineEmployees);
@@ -37,49 +30,40 @@ function socketHandler(io) {
           socket.emit('available-users', onlineDoctors);
           broadcastToRole(io, activeUsers, 'doctor', 'available-users', [getUserInfo(userData)]);
         }
-
         broadcastToAdmins(io, activeUsers, 'user-status-update', {
           userId: userData.id,
           username: userData.username || userData.name || userData.email,
           role: userData.role,
           isOnline: true,
         });
-
-        console.log(`✅ ${userData.role} ${userData.name || userData.email} joined`);
       } catch (error) {
         console.error('❌ Error in user-joined:', error);
         socket.emit('error', { message: 'Failed to join call service' });
       }
     });
 
-    // -------------------- Get Available Users --------------------
     socket.on('get-available-users', () => {
       const user = activeUsers.get(socket.id);
       if (!user) {
         socket.emit('error', { message: 'User not authenticated' });
         return;
       }
-
       if (user.role === 'doctor') {
-        const onlineEmployees = getOnlineUsersByRole('employee');
-        socket.emit('available-users', onlineEmployees);
+        socket.emit('available-users', getOnlineUsersByRole('employee'));
       } else if (user.role === 'employee') {
-        const onlineDoctors = getOnlineUsersByRole('doctor');
-        socket.emit('available-users', onlineDoctors);
+        socket.emit('available-users', getOnlineUsersByRole('doctor'));
       }
     });
 
-    // -------------------- Call Initiation --------------------
     socket.on('initiate-call', async ({ callerId, calleeId, callerName, signalData, from }) => {
       try {
         const callee = await User.findById(calleeId);
         if (!callee?.socketId) {
-          return socket.emit('call-error', { message: 'User is offline' });
+          socket.emit('call-error', { message: 'User is offline or not connected' });
+          return;
         }
-
         const call = new Call({ caller: callerId, callee: calleeId, status: 'initiated' });
         await call.save();
-
         const callId = call._id.toString();
         const callInfo = {
           callId,
@@ -88,24 +72,20 @@ function socketHandler(io) {
           status: 'initiated',
           startTime: new Date(),
         };
-
         activeCalls.set(callId, callInfo);
-
         io.to(callee.socketId).emit('call-made', {
           callId,
           signal: signalData,
           from,
           name: callerName,
         });
-
         broadcastToAdmins(io, activeUsers, 'new-call', callInfo);
       } catch (err) {
         console.error('❌ initiate-call error:', err);
-        socket.emit('call-error', { message: 'Failed to initiate call' });
+        socket.emit('call-error', { message: 'Failed to initiate call. Check server logs.' });
       }
     });
 
-    // -------------------- Accept Call --------------------
     socket.on('accept-call', async ({ callId, signal, to }) => {
       try {
         const call = activeCalls.get(callId);
@@ -113,21 +93,17 @@ function socketHandler(io) {
           socket.emit('call-error', { message: 'Call not found' });
           return;
         }
-
         call.status = 'accepted';
         await Call.findByIdAndUpdate(callId, { status: 'accepted' });
-
         io.to(call.caller.socketId).emit('call-accepted', signal);
         io.to(call.callee.socketId).emit('call-accepted', signal);
-
         broadcastToAdmins(io, activeUsers, 'call-status-update', call);
       } catch (err) {
         console.error('❌ accept-call error:', err);
-        socket.emit('call-error', { message: 'Failed to accept call' });
+        socket.emit('call-error', { message: 'Failed to accept call. Check TURN server or network.' });
       }
     });
 
-    // -------------------- Reject Call --------------------
     socket.on('reject-call', async ({ callId, to }) => {
       try {
         const call = activeCalls.get(callId);
@@ -135,15 +111,9 @@ function socketHandler(io) {
           socket.emit('call-error', { message: 'Call not found' });
           return;
         }
-
-        await Call.findByIdAndUpdate(callId, {
-          status: 'rejected',
-          endTime: new Date(),
-        });
-
+        await Call.findByIdAndUpdate(callId, { status: 'rejected', endTime: new Date() });
         io.to(to).emit('call-rejected', { callId });
         activeCalls.delete(callId);
-
         broadcastToAdmins(io, activeUsers, 'call-ended', { callId, reason: 'rejected' });
       } catch (err) {
         console.error('❌ reject-call error:', err);
@@ -151,7 +121,6 @@ function socketHandler(io) {
       }
     });
 
-    // -------------------- End Call --------------------
     socket.on('end-call', async ({ callId, to }) => {
       try {
         const call = activeCalls.get(callId);
@@ -159,15 +128,11 @@ function socketHandler(io) {
           socket.emit('call-error', { message: 'Call not found' });
           return;
         }
-
         const endTime = new Date();
         const duration = Math.floor((endTime - call.startTime) / 1000);
-
         await Call.findByIdAndUpdate(callId, { status: 'ended', endTime, duration });
-
         io.to(call.caller.socketId).emit('call-ended', { callId });
         io.to(call.callee.socketId).emit('call-ended', { callId });
-
         activeCalls.delete(callId);
         broadcastToAdmins(io, activeUsers, 'call-ended', { callId, duration });
       } catch (err) {
@@ -176,7 +141,6 @@ function socketHandler(io) {
       }
     });
 
-    // -------------------- WebRTC Signaling --------------------
     socket.on('offer', ({ offer, target, from }) => {
       io.to(target).emit('offer', { offer, from });
     });
@@ -189,7 +153,6 @@ function socketHandler(io) {
       io.to(target).emit('ice-candidate', { candidate, from });
     });
 
-    // -------------------- Admin: Get Active Calls --------------------
     socket.on('get-active-calls', () => {
       const user = activeUsers.get(socket.id);
       if (user?.role === 'admin') {
@@ -197,33 +160,18 @@ function socketHandler(io) {
       }
     });
 
-    // -------------------- Disconnect --------------------
     socket.on('disconnect', async () => {
       const user = activeUsers.get(socket.id);
       if (!user) return;
-
-      await User.findByIdAndUpdate(user.id, {
-        isOnline: false,
-        socketId: null,
-      });
-
-      // Handle active calls
+      await User.findByIdAndUpdate(user.id, { isOnline: false, socketId: null });
       for (const [callId, call] of activeCalls.entries()) {
         if (call.caller.socketId === socket.id || call.callee.socketId === socket.id) {
-          const otherSocketId = call.caller.socketId === socket.id
-            ? call.callee.socketId
-            : call.caller.socketId;
-
+          const otherSocketId = call.caller.socketId === socket.id ? call.callee.socketId : call.caller.socketId;
           io.to(otherSocketId).emit('call-ended', { callId, reason: 'disconnect' });
-          await Call.findByIdAndUpdate(callId, {
-            status: 'ended',
-            endTime: new Date(),
-          });
+          await Call.findByIdAndUpdate(callId, { status: 'ended', endTime: new Date() });
           activeCalls.delete(callId);
         }
       }
-
-      // Notify other users about disconnection
       if (user.role === 'doctor') {
         broadcastToRole(io, activeUsers, 'employee', 'user-disconnected', {
           id: user.id,
@@ -239,31 +187,21 @@ function socketHandler(io) {
           socketId: socket.id,
         });
       }
-
       broadcastToAdmins(io, activeUsers, 'user-status-update', {
         userId: user.id,
         username: user.username || user.name || user.email,
         role: user.role,
         isOnline: false,
       });
-
       activeUsers.delete(socket.id);
-      console.log(`👋 ${user.username || user.name || user.email} disconnected`);
     });
   });
 
-  // Status log every 30s
   setInterval(() => {
     console.log(`📊 Active Users: ${activeUsers.size}, Active Calls: ${activeCalls.size}`);
-    console.log('Users by role:', {
-      doctors: getOnlineUsersByRole('doctor').length,
-      employees: getOnlineUsersByRole('employee').length,
-      admins: getOnlineUsersByRole('admin').length,
-    });
   }, 30000);
 }
 
-// Helper functions
 function getOnlineUsersByRole(role) {
   const users = [];
   for (const [socketId, userData] of activeUsers.entries()) {
