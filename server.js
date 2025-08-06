@@ -8,6 +8,7 @@ const { verifyEmailConnection } = require('./services/emailService');
 const { Server } = require('socket.io');
 const http = require('http');
 const jwt = require('jsonwebtoken');
+const bcrypt = require('bcryptjs');
 const mongoose = require('mongoose');
 
 // Models
@@ -36,25 +37,19 @@ connectDB();
 const app = express();
 const server = http.createServer(app);
 
-// CORS configuration
 const allowedOrigins = ['http://localhost:3000', 'https://emp-health-frontend.vercel.app'];
 app.use(cors({
   origin: (origin, callback) => {
-    console.log('Request Origin:', origin);
+    console.log('Request Origin:', origin); // Debug the origin
     if (!origin || allowedOrigins.includes(origin) || /^https:\/\/emp-health-frontend-.*\.vercel\.app$/.test(origin)) {
-      callback(null, origin);
+      callback(null, true);
     } else {
       console.error('CORS Error: Origin not allowed:', origin);
       callback(new Error('Not allowed by CORS'));
     }
   },
-  methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
-  allowedHeaders: ['Content-Type', 'Authorization'],
-  credentials: true,
-  optionsSuccessStatus: 200
+  credentials: true
 }));
-
-app.options('*', cors());
 
 app.use(helmet());
 app.use(express.json());
@@ -69,13 +64,25 @@ const validateRequest = (req, res, next) => {
   next();
 };
 
-// Create a router for schedule-related routes
-const scheduleRouter = express.Router();
-scheduleRouter.post('/:userId/schedule', async (req, res) => {
-  try {
-    const { date, startTime, endTime, breaks } = req.body;
-    console.log('Received schedule data:', { date, startTime, endTime, breaks });
+app.get('/', (req, res) => res.send('CORS Configured!'));
+app.use('/api/auth', authRoutes);
+app.use('/api', challengeRoutes);
+app.use('/api', doctorRoutes);
+app.use('/api', reportRoutes);
 
+app.get('/api/challenges', (req, res) => {
+  res.status(200).json({ message: 'Challenges endpoint', challenges: [] });
+});
+
+
+
+// Backend: routes/auth.js (or wherever the endpoint is defined)
+app.post('/:userId/schedule', async (req, res) => {
+  try {
+    const { date, startTime, endTime, breaks } = req.body; // Destructure directly from req.body
+    console.log('Received schedule data:', { date, startTime, endTime, breaks }); // Log incoming data
+
+    // Validate input data
     if (!date || !startTime || !endTime) {
       return res.status(400).json({ message: 'Date, start time, and end time are required' });
     }
@@ -87,6 +94,7 @@ scheduleRouter.post('/:userId/schedule', async (req, res) => {
       return res.status(403).json({ message: 'Only doctors can update schedules' });
     }
 
+    // Prepare the update object
     const updateData = {
       workingHours: {
         start: startTime,
@@ -103,10 +111,11 @@ scheduleRouter.post('/:userId/schedule', async (req, res) => {
       },
     };
 
+    // Update the user document without running full validation
     await User.findByIdAndUpdate(
       req.params.userId,
       updateData,
-      { new: true, runValidators: false }
+      { new: true, runValidators: false } // Disable validation for this update
     );
 
     res.status(200).json({ message: 'Schedule updated successfully' });
@@ -116,38 +125,42 @@ scheduleRouter.post('/:userId/schedule', async (req, res) => {
   }
 });
 
-// Register routes with error handling
-const registerRoutes = (path, routes) => {
-  try {
-    console.log(`Registering routes for path: ${path}`);
-    app.use(path, routes);
-  } catch (error) {
-    console.error(`Failed to register routes for ${path}:`, error.message);
-  }
-};
-
-app.get('/', (req, res) => res.send('CORS Configured!'));
-registerRoutes('/api/auth', authRoutes);
-registerRoutes('/api', challengeRoutes);
-registerRoutes('/api', doctorRoutes);
-registerRoutes('/api', reportRoutes);
-registerRoutes('/api', scheduleRouter);
-
-app.get('/api/challenges', (req, res) => {
-  res.status(200).json({ message: 'Challenges endpoint', challenges: [] });
-});
-
 app.get('/api/reports/all', auth, async (req, res) => {
   try {
     console.log('GET /api/reports/all - User:', req.user);
-    const reports = await Report.find().populate('user', 'name email');
+    
+    const reports = await Report.aggregate([
+      { $sort: { createdAt: -1 } }, // optional
+      {
+        $lookup: {
+          from: 'users',
+          localField: 'user',
+          foreignField: '_id',
+          as: 'user'
+        }
+      },
+      { $unwind: '$user' },
+      {
+        $project: {
+          _id: 1,
+          title: 1,
+          description: 1,
+          createdAt: 1,
+          'user.name': 1,
+          'user.email': 1
+        }
+      }
+    ], { allowDiskUse: true });
+
     res.set('Cache-Control', 'no-cache');
     res.status(200).json({ reports });
+
   } catch (error) {
     console.error('Error in GET /api/reports/all:', error);
     res.status(500).json({ message: 'Failed to fetch reports', error: error.message });
   }
 });
+
 
 app.post('/api/report', auth, validateRequest, async (req, res) => {
   try {
@@ -235,14 +248,14 @@ app.post('/api/appointments', auth, validateRequest, async (req, res) => {
   try {
     console.log('POST /api/appointments - Request body:', req.body, 'User:', req.user);
     const { day, date, time, type, doctorName, avatarSrc, userId } = req.body;
-    if (!day || !date || !time || !type || !doctorName || !userId) {
-      return res.status(400).json({ message: 'Missing required fields: day, date, time, type, doctorName, userId' });
+    if (!day || !date || !time || !type || !doctorName || !avatarSrc || !userId) {
+      return res.status(400).json({ message: 'All fields are required including userId.' });
     }
     if (!mongoose.Types.ObjectId.isValid(userId)) {
       console.error('POST /api/appointments - Invalid userId:', userId);
       return res.status(400).json({ message: 'Invalid userId format' });
     }
-    const appointment = new Appointment({ day, date, time, type, doctorName, avatarSrc: avatarSrc || '', user: userId });
+    const appointment = new Appointment({ day, date, time, type, doctorName, avatarSrc, user: userId });
     await appointment.save();
     await User.findByIdAndUpdate(userId, { $push: { appointments: appointment._id } });
     res.status(201).json({ message: 'Appointment created successfully', appointment });
@@ -350,9 +363,9 @@ app.use((err, req, res, next) => {
 const io = new Server(server, {
   cors: {
     origin: (origin, callback) => {
-      console.log('Socket.IO Request Origin:', origin);
+      console.log('Socket.IO Request Origin:', origin); // Debug Socket.IO origin
       if (!origin || allowedOrigins.includes(origin) || /^https:\/\/emp-health-frontend-.*\.vercel\.app$/.test(origin)) {
-        callback(null, origin);
+        callback(null, true);
       } else {
         console.error('Socket.IO CORS Error: Origin not allowed:', origin);
         callback(new Error('Not allowed by CORS'));

@@ -107,7 +107,7 @@ router.post('/forgot-password', async (req, res) => {
 
 
     // Use environment variable for frontend URL
-    const frontendUrl = process.env.FRONTEND_URL || 'https://emp-health-frontend.vercel.app/';
+    const frontendUrl = process.env.FRONTEND_URL || 'http://localhost:3000';
     const resetUrl = `${frontendUrl}/reset-password/${resetToken}`;
 
     const mailOptions = {
