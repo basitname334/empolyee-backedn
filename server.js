@@ -263,8 +263,6 @@ app.post('/api/appointments', auth, validateRequest, async (req, res) => {
     console.error('Error in POST /api/appointments:', error);
     res.status(500).json({ message: 'Failed to create appointment', error: error.message });
   }
-  console.log('POST /api/appointments - Request body:', req.body, 'User:', req.user);
-
 });
 
 app.get('/api/appointments', async (req, res) => {
