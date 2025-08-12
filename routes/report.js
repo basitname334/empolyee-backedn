@@ -187,51 +187,45 @@ router.delete('/reports/:id', auth, async (req, res) => {
 // POST /:userId/notify - Send notification to user (admin only)
 router.post('/:userId/notify', auth, async (req, res) => {
   const { userId } = req.params;
-  const { message, timestamp } = req.body;
+  const { message, timestamp, reportId } = req.body;
 
   try {
-    // Validate input
     if (!message || !timestamp) {
       return res.status(400).json({ message: 'Message and timestamp are required' });
     }
 
-    // Validate timestamp format (ISO 8601)
     if (!/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}.*Z$/.test(timestamp)) {
       return res.status(400).json({ message: 'Invalid timestamp format' });
     }
 
-
-
-    // Find user by email (assuming userId is email as per frontend)
     const user = await User.findOne({ email: userId });
     if (!user) {
       return res.status(404).json({ message: 'User not found' });
     }
 
-    // Restrict access to admins only
     if (req.user.role !== 'admin') {
       return res.status(403).json({ message: 'Access denied. Admins only.' });
     }
 
-        // Check if the user already has a notification
-const existingNotification = await Notification.findOne({ user: user._id });
-if (existingNotification) {
-  return res.status(400).json({ message: 'User has already been notified' });
-}
-    // Create and save notification
+    // Check for existing notification for this report
+    const existingNotification = await Notification.findOne({ user: user._id, reportId });
+    if (existingNotification) {
+      return res.status(400).json({ message: 'User has already been notified for this report' });
+    }
+
     const notification = new Notification({
       user: user._id,
       message,
       timestamp: new Date(timestamp),
+      reportId,
     });
     await notification.save();
 
-    // Optionally, add notification to user's notifications array
     user.notifications = user.notifications || [];
     user.notifications.push(notification._id);
     await user.save();
 
-    res.status(200).json({ message: 'Notification sent successfully' });
+    res.status(200).json({ message: 'Notification sent successfully', notification });
   } catch (error) {
     console.error('Error sending notification:', error);
     res.status(500).json({ message: 'Server error' });
@@ -239,28 +233,21 @@ if (existingNotification) {
 });
 
 
-
 router.get('/:userId/notifications', auth, async (req, res) => {
   const { userId } = req.params;
 
   try {
-    // Find user by email (assuming userId is email)
     const user = await User.findOne({ email: userId });
     if (!user) {
       return res.status(404).json({ message: 'User not found' });
     }
 
- 
+    const notifications = await Notification.find({ user: user._id }).sort({ timestamp: -1 });
 
-    // Fetch all notifications for the user, sorted by timestamp (newest first)
-const notifications = await Notification.find({ user: user._id }).sort({ timestamp: -1 });
-
-res.status(200).json({
-  notifications,
-  message: notifications.length ? 'Notifications found' : 'No notifications'
-});
-
-
+    res.status(200).json({
+      notifications,
+      message: notifications.length ? 'Notifications found' : 'No notifications',
+    });
   } catch (error) {
     console.error('Error fetching notifications:', error);
     res.status(500).json({ message: 'Server error' });
@@ -272,14 +259,13 @@ res.status(200).json({
 
 router.post('/:email/notify_admin', auth, async (req, res) => {
   const { email } = req.params;
-  const { message, timestamp,userName } = req.body;
+  const { message, timestamp, userName, reportId } = req.body;
 
   try {
-    if (!message || !timestamp) {
-      return res.status(400).json({ message: 'Message and timestamp are required' });
+    if (!message || !timestamp || !reportId) {
+      return res.status(400).json({ message: 'Message, timestamp, and reportId are required' });
     }
 
-    // ISO 8601 format validation
     if (!/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}.*Z$/.test(timestamp)) {
       return res.status(400).json({ message: 'Invalid timestamp format' });
     }
@@ -288,53 +274,74 @@ router.post('/:email/notify_admin', auth, async (req, res) => {
     if (!user) {
       return res.status(404).json({ message: 'User not found' });
     }
-const existingNotification = await NotificationAdmin.findOne({ user: user._id });
-if (existingNotification) {
-  return res.status(400).json({ message: 'Admin has already been notified' });
-}
-const notification = new NotificationAdmin({ // ✅ Correct spelling
-  user: user._id,
-  userName,
-  message,
-  timestamp: new Date(timestamp),
-});
+
+    const existingNotification = await NotificationAdmin.findOne({ user: user._id, reportId });
+    if (existingNotification) {
+      return res.status(400).json({ message: 'Admin has already been notified for this report' });
+    }
+
+    const notification = new NotificationAdmin({
+      user: user._id,
+      userName,
+      message,
+      timestamp: new Date(timestamp),
+      reportId,
+    });
     await notification.save();
 
-    // Optionally link to user's notifications
     user.notifications = user.notifications || [];
     user.notifications.push(notification._id);
     await user.save();
 
-    res.status(200).json({ message: 'Notification sent successfully' });
+    res.status(200).json({ message: 'Notification sent successfully', notification });
   } catch (error) {
     console.error('Error sending notification:', error);
     res.status(500).json({ message: 'Server error' });
   }
 });
 
-router.get('/:userId/notifications_admin', auth, async (req, res) => {
-  const { userId } = req.params;
+router.get('/:email/notifications_admin', auth, async (req, res) => {
+  const { email } = req.params;
+  const { reportId } = req.query; // Optional: filter by reportId
 
   try {
-    // Find user by email (assuming userId is email)
-    const user = await User.findOne({ name: userId });
+    const user = await User.findOne({ email });
     if (!user) {
       return res.status(404).json({ message: 'User not found' });
     }
 
- 
+    const query = { user: user._id };
+    if (reportId) {
+      query.reportId = reportId;
+    }
 
-    // Fetch all notifications for the user, sorted by timestamp (newest first)
-const notifications = await NotificationAdmin.find({ user: user._id }).sort({ timestamp: -1 });
+    const notifications = await NotificationAdmin.find(query).sort({ timestamp: -1 });
 
-res.status(200).json({
-  notifications,
-  message: NotificationAdmin.length ? 'Notifications found' : 'No notifications'
+    res.status(200).json({
+      notifications,
+      message: notifications.length ? 'Notifications found' : 'No notifications',
+    });
+  } catch (error) {
+    console.error('Error fetching admin notifications:', error);
+    res.status(500).json({ message: 'Server error' });
+  }
 });
 
+router.patch('/notifications/:id', auth, async (req, res) => {
+  const { id } = req.params;
 
+  try {
+    const notification = await Notification.findById(id) || await NotificationAdmin.findById(id);
+    if (!notification) {
+      return res.status(404).json({ message: 'Notification not found' });
+    }
+
+    notification.read = true;
+    await notification.save();
+
+    res.status(200).json({ message: 'Notification marked as read' });
   } catch (error) {
-    console.error('Error fetching notifications:', error);
+    console.error('Error marking notification as read:', error);
     res.status(500).json({ message: 'Server error' });
   }
 });

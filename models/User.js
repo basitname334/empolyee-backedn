@@ -139,6 +139,9 @@ workingHours: {
     type: String,
     default: "17:00"
   },
+   date:{
+    type: String,
+  },
   breaks: [{
     startTime: {
       type: String,

@@ -132,6 +132,9 @@ workingHours: {
     type: String,
     default: "17:00"
   },
+  date:{
+    type: String,
+  },
 resetPasswordToken: String,
 resetPasswordExpires: Date,
 lastPasswordResetRequest: Date,

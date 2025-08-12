@@ -10,7 +10,10 @@ const http = require('http');
 const jwt = require('jsonwebtoken');
 const bcrypt = require('bcryptjs');
 const mongoose = require('mongoose');
+const  documentRoutes =  require("./routes/document");
+const  postRoutes  =  require("./routes/posts");
 
+const path = require("path");
 // Models
 const User = require('./models/User');
 const Appointment = require('./models/Appointment');
@@ -41,6 +44,7 @@ const allowedOrigins = ['http://localhost:3000', 'https://emp-health-frontend.ve
 app.use(cors({
   origin: (origin, callback) => {
     console.log('Request Origin:', origin); // Debug the origin
+    
     if (!origin || allowedOrigins.includes(origin) || /^https:\/\/emp-health-frontend-.*\.vercel\.app$/.test(origin)) {
       callback(null, true);
     } else {
@@ -69,7 +73,15 @@ app.use('/api/auth', authRoutes);
 app.use('/api', challengeRoutes);
 app.use('/api', doctorRoutes);
 app.use('/api', reportRoutes);
+app.use("/uploads", express.static(path.join(process.cwd(), "uploads")));
+app.use('/api/documents', (req, res, next) => {
+  res.header('Cross-Origin-Resource-Policy', 'cross-origin');
+  res.header('Cross-Origin-Embedder-Policy', 'unsafe-none');
+  next();
+});
+app.use('/api/posts', postRoutes);
 
+app.use("/api/documents", documentRoutes);
 app.get('/api/challenges', (req, res) => {
   res.status(200).json({ message: 'Challenges endpoint', challenges: [] });
 });
@@ -100,6 +112,8 @@ app.post('/:userId/schedule', async (req, res) => {
         start: startTime,
         end: endTime,
         breaks: breaks || [],
+        date,
+
       },
       $push: {
         schedule: {

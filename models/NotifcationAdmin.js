@@ -1,11 +1,11 @@
 const mongoose = require('mongoose');
 
 const NotificationAdminSchema = new mongoose.Schema({
-  user: { type: String, required: true }, // or type: mongoose.Schema.Types.
-  userName: { type: String, required: true }, // or type: mongoose.Schema.Types.ObjectId if referencing user
-  // ObjectId if referencing user
+  user: { type: mongoose.Schema.Types.ObjectId, ref: 'User', required: true },
+  userName: { type: String, required: false },
   message: { type: String, required: true },
-  timestamp: { type: String, required: true },
+  timestamp: { type: Date, required: true },
+  reportId: { type: String, required: true }, // Link to specific report
   read: { type: Boolean, default: false },
 });
 
