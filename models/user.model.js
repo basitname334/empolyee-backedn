@@ -139,6 +139,7 @@ passwordChangedAt: Date,
     type: String,
     default: "17:00"
   },
+    fcmToken: { type: String }, 
    date:{
     type: String,
   },

@@ -13,6 +13,7 @@ const UserSchema = new mongoose.Schema({
     trim: true,
     lowercase: true
   },
+    fcmToken: { type: String }, 
   password: { 
     type: String, 
     required: true 
@@ -149,7 +150,7 @@ passwordChangedAt: Date,
       required: true
     }
   }]
-}
+},
   
   consultationFee: {
     type: Number,

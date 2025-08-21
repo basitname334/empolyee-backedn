@@ -11,6 +11,11 @@ const reportSchema = new mongoose.Schema({
     required: true,
     enum: ['hazard', 'safety', 'incident'] // Added 'incident'
   },
+   identityStatus: { 
+    type: String, 
+    enum: ['provided', 'declined', null], 
+    default: null 
+  }, // Add identity status field
   date: {
     type: String,
     required: true
