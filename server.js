@@ -1,3 +1,4 @@
+// Updated backend: server.js
 const express = require('express');
 const dotenv = require('dotenv');
 const cors = require('cors');
@@ -10,8 +11,8 @@ const http = require('http');
 const jwt = require('jsonwebtoken');
 const bcrypt = require('bcryptjs');
 const mongoose = require('mongoose');
-const  documentRoutes =  require("./routes/document");
-const  postRoutes  =  require("./routes/posts");
+const documentRoutes = require("./routes/document");
+const postRoutes = require("./routes/posts");
 
 const path = require("path");
 // Models
@@ -29,6 +30,7 @@ const authRoutes = require('./routes/authRoutes');
 const reportRoutes = require('./routes/report');
 const challengeRoutes = require('./routes/challenges');
 const doctorRoutes = require('./routes/doctor');
+const socketHandler = require('./sockets/callHandlers'); // Assuming socketHandler.js is in the same directory
 
 dotenv.config();
 
@@ -86,7 +88,50 @@ app.get('/api/challenges', (req, res) => {
   res.status(200).json({ message: 'Challenges endpoint', challenges: [] });
 });
 
+// Added auth routes for call-related APIs (assuming not in authRoutes)
+app.post('/api/auth/store_socket_id', auth, async (req, res) => {
+  const { userId, socketId } = req.body;
+  try {
+    const user = await User.findById(userId);
+    if (!user) return res.status(404).json({success: false, message: 'User not found'});
+    user.socketId = socketId;
+    await user.save();
+    res.json({success: true, data: user});
+  } catch(e){
+    res.status(500).json({success: false, message: e.message});
+  }
+});
 
+app.post('/api/auth/leave', auth, async (req, res) => {
+  const { userId } = req.body;
+  try {
+    const user = await User.findById(userId);
+    if (!user) return res.status(404).json({success: false, message: 'User not found'});
+    user.socketId = null;
+    await user.save();
+    res.json({success: true});
+  } catch(e){
+    res.status(500).json({success: false, message: e.message});
+  }
+});
+
+app.get('/api/auth/online-users', auth, async (req, res) => {
+  try {
+    const users = await User.find({role: 'employee', socketId: { $ne: null }}).select('_id socketId');
+    res.json({success: true, data: users});
+  } catch(e){
+    res.status(500).json({success: false, message: e.message});
+  }
+});
+
+app.get('/api/auth/online-doctors', auth, async (req, res) => {
+  try {
+    const doctors = await User.find({role: 'doctor', socketId: { $ne: null }}).select('_id socketId');
+    res.json({success: true, data: doctors});
+  } catch(e){
+    res.status(500).json({success: false, message: e.message});
+  }
+});
 
 // Backend: routes/auth.js (or wherever the endpoint is defined)
 app.post('/:userId/schedule', async (req, res) => {
@@ -390,54 +435,8 @@ const io = new Server(server, {
   }
 });
 
-io.on('connection', (socket) => {
-  console.log('Socket.IO: New connection', socket.id);
-  socket.on('join-room', ({ roomId, userId }) => {
-    socket.join(roomId.toLowerCase());
-    const room = io.sockets.adapter.rooms.get(roomId.toLowerCase());
-    const users = room ? [...room] : [socket.id];
-    io.to(roomId.toLowerCase()).emit('room-users', users);
-    socket.to(roomId.toLowerCase()).emit('user-connected', userId);
-  });
-
-  socket.on('call-user', ({ userToCall, signalData, from, name }) => {
-    io.to(userToCall).emit('call-made', { signal: signalData, from, name });
-  });
-
-  socket.on('answer-call', ({ signal, to }) => {
-    io.to(to).emit('call-accepted', signal);
-  });
-
-  socket.on('reject-call', ({ to }) => {
-    io.to(to).emit('call-rejected');
-  });
-
-  socket.on('end-call', ({ to }) => {
-    io.to(to).emit('call-ended');
-  });
-
-  socket.on('ice-candidate', ({ candidate, to }) => {
-    io.to(to).emit('ice-candidate', { candidate });
-  });
-
-  socket.on('offer', ({ offer, from, to }) => {
-    io.to(to).emit('offer', { offer, from });
-  });
-
-  socket.on('answer', ({ answer, to }) => {
-    io.to(to).emit('pass', { answer });
-  });
-
-  socket.on('disconnect', () => {
-    socket.rooms.forEach(room => {
-      if (room !== socket.id) {
-        socket.to(room).emit('user-disconnected', socket.id);
-        const updatedUsers = [...(io.sockets.adapter.rooms.get(room) || [])];
-        io.to(room).emit('room-users', updatedUsers);
-      }
-    });
-  });
-});
+// Use the updated socketHandler
+socketHandler(io);
 
 const PORT = process.env.PORT || 5000;
 server.listen(PORT, () => {
