@@ -1,4 +1,3 @@
-// Updated backend: models/Call.js (no major changes, but included for completeness)
 const mongoose = require('mongoose');
 
 const CallSchema = new mongoose.Schema({

@@ -1,7 +1,3 @@
-// Updated backend: socketHandler.js
-const User = require('../models/User');
-const Call = require('../models/Call'); // For potential call recording
-
 const activeUsers = new Map(); // socket.id => userData
 const activeCalls = new Map(); // callId => callInfo
 
@@ -34,7 +30,7 @@ function socketHandler(io) {
         socket.emit('available-users', availableUsers);
 
         // Notify other users about this user joining
-        notifyOtherUsers(io, socket.id, userData);
+        notifyOtherUsers(socket.id, userData);
 
         console.log(`✅ ${userData.role} ${userData.name} joined (${socket.id})`);
         logActiveUsers();
@@ -79,9 +75,6 @@ function socketHandler(io) {
         };
 
         activeCalls.set(callId, callInfo);
-
-        // Notify the caller with callId
-        io.to(socket.id).emit('call-initiated', { callId });
 
         // Notify the callee
         io.to(callee.socketId).emit('incoming-call', {
@@ -155,17 +148,6 @@ function socketHandler(io) {
         io.to(call.caller.socketId).emit('call-ended', { callId });
         io.to(call.callee.socketId).emit('call-ended', { callId });
 
-        // Optionally save to DB
-        const newCall = new Call({
-          caller: call.caller.id,
-          callee: call.callee.id,
-          startTime: call.startTime,
-          endTime: call.endTime,
-          duration: call.duration,
-          status: 'ended'
-        });
-        await newCall.save();
-
         activeCalls.delete(callId);
         console.log(`📞 Call ${callId} ended (duration: ${call.duration}s)`);
       } catch (error) {
@@ -196,14 +178,6 @@ function socketHandler(io) {
 
       console.log(`👋 ${user.name} (${user.role}) disconnected`);
 
-      // Update DB
-      try {
-        await User.findByIdAndUpdate(user.id, { socketId: null });
-        console.log(`Updated user ${user.id} socketId to null on disconnect`);
-      } catch (e) {
-        console.error('Error updating user on disconnect:', e);
-      }
-
       // Handle active calls involving this user
       for (const [callId, call] of activeCalls.entries()) {
         if (call.caller.socketId === socket.id || call.callee.socketId === socket.id) {
@@ -218,7 +192,7 @@ function socketHandler(io) {
       }
 
       // Notify other users about disconnection
-      notifyUserDisconnected(io, socket.id, user);
+      notifyUserDisconnected(socket.id, user);
 
       // Remove from active users
       activeUsers.delete(socket.id);
@@ -265,26 +239,26 @@ function findUserById(userId) {
   return null;
 }
 
-function notifyOtherUsers(io, newUserSocketId, newUserData) {
+function notifyOtherUsers(newUserSocketId, newUserData) {
   const targetRole = newUserData.role === 'doctor' ? 'employee' : 'doctor';
   
   for (const [socketId, userData] of activeUsers.entries()) {
     if (socketId !== newUserSocketId && userData.role === targetRole) {
       // Send updated user list to existing users
       const availableUsers = getAvailableUsersByRole(userData.role);
-      io.to(socketId).emit('available-users', availableUsers);
+      global.io.to(socketId).emit('available-users', availableUsers);
     }
   }
 }
 
-function notifyUserDisconnected(io, disconnectedSocketId, disconnectedUser) {
+function notifyUserDisconnected(disconnectedSocketId, disconnectedUser) {
   const targetRole = disconnectedUser.role === 'doctor' ? 'employee' : 'doctor';
   
   for (const [socketId, userData] of activeUsers.entries()) {
     if (userData.role === targetRole) {
       // Send updated user list
       const availableUsers = getAvailableUsersByRole(userData.role);
-      io.to(socketId).emit('available-users', availableUsers);
+      global.io.to(socketId).emit('available-users', availableUsers);
     }
   }
 }
