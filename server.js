@@ -1,3 +1,5 @@
+// server.js
+
 const express = require('express');
 const dotenv = require('dotenv');
 const cors = require('cors');
@@ -10,11 +12,11 @@ const http = require('http');
 const jwt = require('jsonwebtoken');
 const bcrypt = require('bcryptjs');
 const mongoose = require('mongoose');
-const  documentRoutes =  require("./routes/document");
-const  postRoutes  =  require("./routes/posts");
-const { generateToken04 } = require("./services/zegoServerAssistant");  // ✅ sahi import
-
+const documentRoutes = require("./routes/document");
+const postRoutes = require("./routes/posts");
+const { generateToken04 } = require("./services/zegoServerAssistant");
 const path = require("path");
+
 // Models
 const User = require('./models/User');
 const Appointment = require('./models/Appointment');
@@ -41,27 +43,92 @@ connectDB();
 const app = express();
 const server = http.createServer(app);
 
-const allowedOrigins = ['http://localhost:3000', 'https://emp-health-frontend.vercel.app','http://192.168.0.105:3000'];
-app.use(cors({
-  origin: (origin, callback) => {
-    console.log('Request Origin:', origin); // Debug the origin
-    
-    if (!origin || allowedOrigins.includes(origin) || /^https:\/\/emp-health-frontend-.*\.vercel\.app$/.test(origin)) {
-      callback(null, true);
-    } else {
-      console.error('CORS Error: Origin not allowed:', origin);
-      callback(new Error('Not allowed by CORS'));
-    }
-  },
-  credentials: true
+// Make sure Express trusts proxy (useful on Render/Nginx for correct protocol/origin handling)
+app.set('trust proxy', 1);
+
+/**
+ * ----------------------------
+ * CORS: Robust configuration
+ * ----------------------------
+ * - Allows localhost dev
+ * - Allows your main Vercel domain
+ * - Allows ALL Vercel preview deployments (emp-health-frontend-*.vercel.app)
+ * - Handles preflight (OPTIONS) properly
+ */
+const allowedOrigins = [
+  'http://localhost:3000',
+  'http://127.0.0.1:3000',
+  'http://192.168.0.105:3000',
+  'https://emp-health-frontend.vercel.app'
+];
+
+// Regex to allow all preview subdomains on Vercel for this project
+const vercelPreviewRegex = /^https:\/\/emp-health-frontend.*\.vercel\.app$/;
+
+const corsOptionsDelegate = (req, callback) => {
+  const origin = req.header('Origin');
+  console.log('Request Origin:', origin);
+
+  // Allow no-origin requests (e.g., curl, mobile apps)
+  if (!origin) {
+    return callback(null, {
+      origin: true,
+      credentials: true,
+      methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
+      allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With'],
+      optionsSuccessStatus: 204
+    });
+  }
+
+  if (allowedOrigins.includes(origin) || vercelPreviewRegex.test(origin)) {
+    return callback(null, {
+      origin: true,
+      credentials: true,
+      methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
+      allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With'],
+      optionsSuccessStatus: 204
+    });
+  }
+
+  console.error('❌ CORS Error: Origin not allowed:', origin);
+  return callback(new Error('Not allowed by CORS'), {
+    origin: false
+  });
+};
+
+// Must be registered before any routes
+app.use((req, res, next) => {
+  // Helps caches/CDNs vary by Origin automatically
+  res.setHeader('Vary', 'Origin');
+  next();
+});
+app.use(cors(corsOptionsDelegate));
+// Explicitly handle preflight for all routes (bypasses other middleware like auth)
+app.options('*', cors(corsOptionsDelegate));
+
+/**
+ * Security headers
+ * NOTE: We relax only the parts you explicitly configured later for /api/documents.
+ */
+app.use(helmet({
+  // Don't block cross-origin resources globally since you serve documents cross-origin
+  crossOriginResourcePolicy: { policy: "cross-origin" }
 }));
 
-app.use(helmet());
+// Parsers & logger
 app.use(express.json());
+app.use(express.urlencoded({ extended: true }));
 app.use(morgan('dev'));
-verifyEmailConnection();
-app.use('/uploads', express.static('uploads'));
 
+// Verify email transport on boot
+verifyEmailConnection();
+
+// Static uploads (single, consistent mapping)
+app.use("/uploads", express.static(path.join(process.cwd(), "uploads")));
+
+/**
+ * Small helper middleware to ensure JSON body presence on certain POST routes
+ */
 const validateRequest = (req, res, next) => {
   if (!req.body || Object.keys(req.body).length === 0) {
     return res.status(400).json({ message: 'Request body is required' });
@@ -69,38 +136,41 @@ const validateRequest = (req, res, next) => {
   next();
 };
 
-app.get('/', (req, res) => res.send('CORS Configured!'));
+// Base route
+app.get('/', (req, res) => res.send('CORS Configured! ✅'));
+
+/**
+ * ----------------------------
+ * API ROUTES
+ * ----------------------------
+ */
 app.use('/api/auth', authRoutes);
 app.use('/api', challengeRoutes);
 app.use('/api', doctorRoutes);
 app.use('/api', reportRoutes);
-app.use("/uploads", express.static(path.join(process.cwd(), "uploads")));
+
+// Extra headers only for documents to relax CORP/COEP as you had
 app.use('/api/documents', (req, res, next) => {
   res.header('Cross-Origin-Resource-Policy', 'cross-origin');
   res.header('Cross-Origin-Embedder-Policy', 'unsafe-none');
   next();
 });
 app.use('/api/posts', postRoutes);
-
 app.use("/api/documents", documentRoutes);
+
+// Example challenge route (kept)
 app.get('/api/challenges', (req, res) => {
   res.status(200).json({ message: 'Challenges endpoint', challenges: [] });
 });
 
+/**
+ * ----------------------------
+ * ZEGO Cloud Token Route
+ * ----------------------------
+ */
+const APP_ID = Number(process.env.ZEGO_APP_ID) || 1757000422;
+const SERVER_SECRET = process.env.ZEGO_SERVER_SECRET || '0ce7e80431c85f491e586b683d3737b4';
 
-
-
-// for  zegoCloud
-
-
-
-
-const APP_ID = 1757000422;
-const SERVER_SECRET = '0ce7e80431c85f491e586b683d3737b4';
-
-// Enhanced token generation with better error handling
-
-// Enhanced API route with validation
 app.get("/api/zego/token", (req, res) => {
   try {
     const { userID, roomID } = req.query;
@@ -121,14 +191,17 @@ app.get("/api/zego/token", (req, res) => {
   }
 });
 
-
-// Backend: routes/auth.js (or wherever the endpoint is defined)
+/**
+ * ----------------------------
+ * SCHEDULING
+ * ----------------------------
+ * NOTE: Path kept as-is (/:userId/schedule)
+ */
 app.post('/:userId/schedule', async (req, res) => {
   try {
-    const { date, startTime, endTime, breaks } = req.body; // Destructure directly from req.body
-    console.log('Received schedule data:', { date, startTime, endTime, breaks }); // Log incoming data
+    const { date, startTime, endTime, breaks } = req.body;
+    console.log('Received schedule data:', { date, startTime, endTime, breaks });
 
-    // Validate input data
     if (!date || !startTime || !endTime) {
       return res.status(400).json({ message: 'Date, start time, and end time are required' });
     }
@@ -136,32 +209,22 @@ app.post('/:userId/schedule', async (req, res) => {
     const user = await User.findById(req.params.userId);
     if (!user) return res.status(404).json({ message: 'User not found' });
 
-   
-
-    // Prepare the update object
     const updateData = {
       workingHours: {
         start: startTime,
         end: endTime,
         breaks: breaks || [],
         date,
-
       },
       $push: {
-        schedule: {
-          date,
-          startTime,
-          endTime,
-          breaks: breaks || [],
-        },
+        schedule: { date, startTime, endTime, breaks: breaks || [] },
       },
     };
 
-    // Update the user document without running full validation
     await User.findByIdAndUpdate(
       req.params.userId,
       updateData,
-      { new: true, runValidators: false } // Disable validation for this update
+      { new: true, runValidators: false }
     );
 
     res.status(200).json({ message: 'Schedule updated successfully' });
@@ -171,12 +234,17 @@ app.post('/:userId/schedule', async (req, res) => {
   }
 });
 
+/**
+ * ----------------------------
+ * REPORTS
+ * ----------------------------
+ */
 app.get('/api/reports/all', auth, async (req, res) => {
   try {
     console.log('GET /api/reports/all - User:', req.user);
-    
+
     const reports = await Report.aggregate([
-      { $sort: { createdAt: -1 } }, // optional
+      { $sort: { createdAt: -1 } },
       {
         $lookup: {
           from: 'users',
@@ -200,13 +268,11 @@ app.get('/api/reports/all', auth, async (req, res) => {
 
     res.set('Cache-Control', 'no-cache');
     res.status(200).json({ reports });
-
   } catch (error) {
     console.error('Error in GET /api/reports/all:', error);
     res.status(500).json({ message: 'Failed to fetch reports', error: error.message });
   }
 });
-
 
 app.post('/api/report', auth, validateRequest, async (req, res) => {
   try {
@@ -282,6 +348,11 @@ app.post('/api/report', auth, validateRequest, async (req, res) => {
   }
 });
 
+/**
+ * ----------------------------
+ * PROTECTED CHECK + HEALTH
+ * ----------------------------
+ */
 app.use('/api/protected', auth, (req, res) => {
   res.status(200).json({ message: 'You are logged in and can access this protected route.' });
 });
@@ -290,6 +361,11 @@ app.get('/health', (req, res) => {
   res.status(200).json({ status: 'ok', message: 'Server is running' });
 });
 
+/**
+ * ----------------------------
+ * APPOINTMENTS
+ * ----------------------------
+ */
 app.post('/api/appointments', auth, validateRequest, async (req, res) => {
   try {
     console.log('POST /api/appointments - Request body:', req.body, 'User:', req.user);
@@ -323,6 +399,11 @@ app.get('/api/appointments', async (req, res) => {
   }
 });
 
+/**
+ * ----------------------------
+ * DOCTORS
+ * ----------------------------
+ */
 app.get('/api/all-doctors', async (req, res) => {
   try {
     const doctors = await User.find({ role: 'doctor' });
@@ -333,6 +414,11 @@ app.get('/api/all-doctors', async (req, res) => {
   }
 });
 
+/**
+ * ----------------------------
+ * POLLS
+ * ----------------------------
+ */
 app.post('/api/polls', validateRequest, async (req, res) => {
   try {
     console.log('POST /api/polls - Request body:', req.body);
@@ -378,6 +464,11 @@ app.get('/api/polls', async (req, res) => {
   }
 });
 
+/**
+ * ----------------------------
+ * CALLS
+ * ----------------------------
+ */
 app.post('/api/calls', auth, async (req, res) => {
   try {
     console.log('POST /api/calls - Request body:', req.body, 'User:', req.user);
@@ -394,26 +485,40 @@ app.post('/api/calls', auth, async (req, res) => {
   }
 });
 
+/**
+ * ----------------------------
+ * 404 + Error Handlers
+ * ----------------------------
+ */
 app.use((req, res) => {
   res.status(404).json({ message: 'API endpoint not found' });
 });
 
 app.use((err, req, res, next) => {
   console.error('Global error handler:', err);
+  // Handle CORS errors gracefully for visibility
+  if (err && err.message === 'Not allowed by CORS') {
+    return res.status(403).json({ message: 'CORS: Origin not allowed', origin: req.header('Origin') || null });
+  }
   res.status(500).json({
     message: 'Internal server error',
     error: process.env.NODE_ENV === 'production' ? 'An error occurred' : err.message
   });
 });
 
+/**
+ * ----------------------------
+ * Socket.IO
+ * ----------------------------
+ */
 const io = new Server(server, {
   cors: {
     origin: (origin, callback) => {
-      console.log('Socket.IO Request Origin:', origin); // Debug Socket.IO origin
-      if (!origin || allowedOrigins.includes(origin) || /^https:\/\/emp-health-frontend-.*\.vercel\.app$/.test(origin)) {
+      console.log('Socket.IO Request Origin:', origin);
+      if (!origin || allowedOrigins.includes(origin) || vercelPreviewRegex.test(origin)) {
         callback(null, true);
       } else {
-        console.error('Socket.IO CORS Error: Origin not allowed:', origin);
+        console.error('❌ Socket.IO CORS Error: Origin not allowed:', origin);
         callback(new Error('Not allowed by CORS'));
       }
     },
@@ -424,6 +529,7 @@ const io = new Server(server, {
 
 io.on('connection', (socket) => {
   console.log('Socket.IO: New connection', socket.id);
+
   socket.on('join-room', ({ roomId, userId }) => {
     socket.join(roomId.toLowerCase());
     const room = io.sockets.adapter.rooms.get(roomId.toLowerCase());
@@ -471,9 +577,14 @@ io.on('connection', (socket) => {
   });
 });
 
+/**
+ * ----------------------------
+ * Server start
+ * ----------------------------
+ */
 const PORT = process.env.PORT || 5000;
 server.listen(PORT, () => {
-  console.log(`Server running on port ${PORT}`);
+  console.log(`🚀 Server running on port ${PORT}`);
   if (app._router && app._router.stack) {
     app._router.stack.forEach((middleware) => {
       if (middleware.route && middleware.route.path && middleware.route.stack[0]) {
@@ -488,7 +599,6 @@ server.listen(PORT, () => {
 process.on('unhandledRejection', err => {
   console.error('UNHANDLED REJECTION:', err.stack);
 });
-
 process.on('uncaughtException', err => {
   console.error('UNCAUGHT EXCEPTION:', err.stack);
   process.exit(1);
