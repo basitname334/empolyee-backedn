@@ -10,10 +10,9 @@ const http = require('http');
 const jwt = require('jsonwebtoken');
 const bcrypt = require('bcryptjs');
 const mongoose = require('mongoose');
-const documentRoutes = require("./routes/document");
-const postRoutes = require("./routes/posts");
-const { generateToken04 } = require("./services/zegoServerAssistant");
-
+const  documentRoutes =  require("./routes/document");
+const  postRoutes  =  require("./routes/posts");
+const { createCipheriv } = require('crypto');
 const path = require("path");
 // Models
 const User = require('./models/User');
@@ -41,26 +40,20 @@ connectDB();
 const app = express();
 const server = http.createServer(app);
 
-// Updated CORS configuration
-const allowedOrigins = ['http://localhost:3000', 'https://emp-health-frontend.vercel.app', 'http://192.168.0.105:3000'];
+const allowedOrigins = ['http://localhost:3000', 'https://emp-health-frontend.vercel.app','http://192.168.0.105:3000'];
 app.use(cors({
   origin: (origin, callback) => {
     console.log('Request Origin:', origin); // Debug the origin
-    // Allow requests with no origin (e.g., Postman) or matching allowed origins
+    
     if (!origin || allowedOrigins.includes(origin) || /^https:\/\/emp-health-frontend-.*\.vercel\.app$/.test(origin)) {
-      callback(null, origin || '*'); // Return specific origin or '*' for no-origin requests
+      callback(null, true);
     } else {
       console.error('CORS Error: Origin not allowed:', origin);
       callback(new Error('Not allowed by CORS'));
     }
   },
-  credentials: true,
-  methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
-  allowedHeaders: ['Content-Type', 'Authorization']
+  credentials: true
 }));
-
-// Explicitly handle OPTIONS requests for all routes
-app.options('*', cors());
 
 app.use(helmet());
 app.use(express.json());
@@ -93,36 +86,177 @@ app.get('/api/challenges', (req, res) => {
   res.status(200).json({ message: 'Challenges endpoint', challenges: [] });
 });
 
-// ZegoCloud token generation
-const APP_ID = 1757000422;
-const SERVER_SECRET = '0ce7e80431c85f491e586b683d3737b4';
 
+
+
+// for  zegoCloud
+
+const APP_ID = 1757000422;
+const SERVER_SECRET = "0ce7e80431c85f491e586b683d3737b4";
+
+// Error codes as plain objects
+const ErrorCode = {
+    success: 0,
+    appIDInvalid: 1,
+    userIDInvalid: 3,
+    secretInvalid: 5,
+    effectiveTimeInSecondsInvalid: 6,
+};
+
+const KPrivilegeKey = {
+    PrivilegeKeyLogin: 1,
+    PrivilegeKeyPublish: 2,
+};
+
+const KPrivilegeVal = {
+    PrivilegeEnable: 1,
+    PrivilegeDisable: 0,
+};
+
+function RndNum(a, b) {
+    return Math.ceil((a + (b - a)) * Math.random());
+}
+
+function makeNonce() {
+    return RndNum(-2147483648, 2147483647);
+}
+
+function makeRandomIv() {
+    const str = '0123456789abcdefghijklmnopqrstuvwxyz';
+    const result = [];
+    for (let i = 0; i < 16; i++) {
+        const r = Math.floor(Math.random() * str.length);
+        result.push(str.charAt(r));
+    }
+    return result.join('');
+}
+
+function getAlgorithm(keyBase64) {
+    const key = Buffer.from(keyBase64);
+    switch (key.length) {
+        case 16:
+            return 'aes-128-cbc';
+        case 24:
+            return 'aes-192-cbc';
+        case 32:
+            return 'aes-256-cbc';
+    }
+    throw new Error('Invalid key length: ' + key.length);
+}
+
+function aesEncrypt(plainText, key, iv) {
+    const cipher = createCipheriv(getAlgorithm(key), key, iv);
+    cipher.setAutoPadding(true);
+    const encrypted = cipher.update(plainText);
+    const final = cipher.final();
+    const out = Buffer.concat([encrypted, final]);
+    return Uint8Array.from(out).buffer;
+}
+
+function generateToken04(appId, userId, secret, effectiveTimeInSeconds, payload) {
+    if (!appId || typeof appId !== 'number') {
+        throw {
+            errorCode: ErrorCode.appIDInvalid,
+            errorMessage: 'appID invalid',
+        };
+    }
+
+    if (!userId || typeof userId !== 'string') {
+        throw {
+            errorCode: ErrorCode.userIDInvalid,
+            errorMessage: 'userId invalid',
+        };
+    }
+
+    if (!secret || typeof secret !== 'string' || secret.length !== 32) {
+        throw {
+            errorCode: ErrorCode.secretInvalid,
+            errorMessage: 'secret must be a 32 byte string',
+        };
+    }
+
+    if (!effectiveTimeInSeconds || typeof effectiveTimeInSeconds !== 'number') {
+        throw {
+            errorCode: ErrorCode.effectiveTimeInSecondsInvalid,
+            errorMessage: 'effectiveTimeInSeconds invalid',
+        };
+    }
+
+    const createTime = Math.floor(new Date().getTime() / 1000);
+    const tokenInfo = {
+        app_id: appId,
+        user_id: userId,
+        nonce: makeNonce(),
+        ctime: createTime,
+        expire: createTime + effectiveTimeInSeconds,
+        payload: payload || ''
+    };
+
+    const plaintText = JSON.stringify(tokenInfo);
+    console.log('plain text: ', plaintText);
+
+    const iv = makeRandomIv();
+    console.log('iv', iv);
+
+    const encryptBuf = aesEncrypt(plaintText, secret, iv);
+
+    const [b1, b2, b3] = [new Uint8Array(8), new Uint8Array(2), new Uint8Array(2)];
+    new DataView(b1.buffer).setBigInt64(0, BigInt(tokenInfo.expire), false);
+    new DataView(b2.buffer).setUint16(0, iv.length, false);
+    new DataView(b3.buffer).setUint16(0, encryptBuf.byteLength, false);
+    const buf = Buffer.concat([
+        Buffer.from(b1),
+        Buffer.from(b2),
+        Buffer.from(iv),
+        Buffer.from(b3),
+        Buffer.from(encryptBuf),
+    ]);
+    const dv = new DataView(Uint8Array.from(buf).buffer);
+
+    return '04' + Buffer.from(dv.buffer).toString('base64');
+}
+
+// Fixed API endpoint
 app.get("/api/zego/token", (req, res) => {
   try {
     const { userID, roomID } = req.query;
+
     if (!userID || !roomID) {
-      return res.status(400).json({ error: "userID and roomID are required" });
+      return res.status(400).json({ error: "userID and roomID required" });
     }
+
+    // Generate the token
     const token = generateToken04(
       APP_ID,
       userID,
       SERVER_SECRET,
-      3600,
-      JSON.stringify({ room_id: roomID })
+      3600, // Token expires in 1 hour
+      JSON.stringify({ room_id: roomID }) // Payload with room info
     );
-    res.json({ token });
-  } catch (err) {
-    console.error(err);
-    res.status(500).json({ error: "Token generation failed" });
+
+    res.json({ 
+      token,
+      appID: APP_ID,
+      userID,
+      roomID 
+    });
+
+  } catch (error) {
+    console.error('Token generation error:', error);
+    res.status(500).json({ 
+      error: "Token generation failed", 
+      details: error.message 
+    });
   }
 });
 
-// Schedule route
+// Backend: routes/auth.js (or wherever the endpoint is defined)
 app.post('/:userId/schedule', async (req, res) => {
   try {
-    const { date, startTime, endTime, breaks } = req.body;
-    console.log('Received schedule data:', { date, startTime, endTime, breaks });
+    const { date, startTime, endTime, breaks } = req.body; // Destructure directly from req.body
+    console.log('Received schedule data:', { date, startTime, endTime, breaks }); // Log incoming data
 
+    // Validate input data
     if (!date || !startTime || !endTime) {
       return res.status(400).json({ message: 'Date, start time, and end time are required' });
     }
@@ -130,12 +264,16 @@ app.post('/:userId/schedule', async (req, res) => {
     const user = await User.findById(req.params.userId);
     if (!user) return res.status(404).json({ message: 'User not found' });
 
+   
+
+    // Prepare the update object
     const updateData = {
       workingHours: {
         start: startTime,
         end: endTime,
         breaks: breaks || [],
         date,
+
       },
       $push: {
         schedule: {
@@ -147,10 +285,11 @@ app.post('/:userId/schedule', async (req, res) => {
       },
     };
 
+    // Update the user document without running full validation
     await User.findByIdAndUpdate(
       req.params.userId,
       updateData,
-      { new: true, runValidators: false }
+      { new: true, runValidators: false } // Disable validation for this update
     );
 
     res.status(200).json({ message: 'Schedule updated successfully' });
@@ -160,13 +299,12 @@ app.post('/:userId/schedule', async (req, res) => {
   }
 });
 
-// Reports route
 app.get('/api/reports/all', auth, async (req, res) => {
   try {
     console.log('GET /api/reports/all - User:', req.user);
     
     const reports = await Report.aggregate([
-      { $sort: { createdAt: -1 } },
+      { $sort: { createdAt: -1 } }, // optional
       {
         $lookup: {
           from: 'users',
@@ -190,11 +328,13 @@ app.get('/api/reports/all', auth, async (req, res) => {
 
     res.set('Cache-Control', 'no-cache');
     res.status(200).json({ reports });
+
   } catch (error) {
     console.error('Error in GET /api/reports/all:', error);
     res.status(500).json({ message: 'Failed to fetch reports', error: error.message });
   }
 });
+
 
 app.post('/api/report', auth, validateRequest, async (req, res) => {
   try {
@@ -397,9 +537,9 @@ app.use((err, req, res, next) => {
 const io = new Server(server, {
   cors: {
     origin: (origin, callback) => {
-      console.log('Socket.IO Request Origin:', origin);
+      console.log('Socket.IO Request Origin:', origin); // Debug Socket.IO origin
       if (!origin || allowedOrigins.includes(origin) || /^https:\/\/emp-health-frontend-.*\.vercel\.app$/.test(origin)) {
-        callback(null, origin || '*');
+        callback(null, true);
       } else {
         console.error('Socket.IO CORS Error: Origin not allowed:', origin);
         callback(new Error('Not allowed by CORS'));

@@ -278,9 +278,10 @@ router.post("/:userId/notify", auth, async (req, res) => {
       return res.status(404).json({ message: "User not found" });
     }
 
-    if (req.user.role !== "admin") {
-      return res.status(403).json({ message: "Access denied. Admins only." });
-    }
+    if (req.user.role !== "admin" && req.user.role !== "doctor") {
+  return res.status(403).json({ message: "Access denied. Admins and Doctors only." });
+}
+
 
     // check if notification already exists for this report
     const existingNotification = await Notification.findOne({
@@ -344,71 +345,15 @@ router.get("/:userId/notifications", auth, async (req, res) => {
 
 router.post("/:email/notify_admin", auth, async (req, res) => {
   const { email } = req.params;
-  const { message, timestamp, reportId } = req.body;
+  // 👇 Add admin_message here
+  const { message, timestamp, userName, reportId, admin_message } = req.body;
 
   try {
-    if (!message || !timestamp || !reportId) {
-      return res
-        .status(400)
-        .json({ message: "Message, timestamp, and reportId are required" });
-    }
-
-    // Validate timestamp format
-    if (!/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}.*Z$/.test(timestamp)) {
-      return res.status(400).json({ message: "Invalid timestamp format" });
-    }
-
-    // Find user
     const user = await User.findOne({ email });
     if (!user) {
       return res.status(404).json({ message: "User not found" });
     }
 
-    // Check if notification already exists
-    let existingNotification = await Notification.findOne({
-      user: user._id,
-      reportId,
-    });
-
-    if (existingNotification) {
-      existingNotification.read = true;
-      await existingNotification.save();
-
-      return res.status(200).json({
-        message: "Notification already existed and is now marked as read",
-        notification: existingNotification,
-      });
-    }
-    await Notifcation.save();
-
-    // Push to user.notifications
-    user.notifications = user.notifications || [];
-    user.notifications.push(Notifcation._id);
-    await user.save();
-
-    res
-      .status(200)
-      .json({ message: "Notification sent successfully", Notifcation });
-  } catch (error) {
-    console.error("Error sending notification:", error);
-    res.status(500).json({ message: "Server error" });
-  }
-});
-
-
-// ✅ Notify Admin endpoint
-router.post("/:email/notify_admin", auth, async (req, res) => {
-  const { email } = req.params;
-  const { message, timestamp, userName, reportId } = req.body;
-
-  try {
-    // Find user
-    const user = await User.findOne({ email });
-    if (!user) {
-      return res.status(404).json({ message: "User not found" });
-    }
-
-    // Check agar deny pehle se true hai
     const existingNotification = await Notification.findOne({
       user: user._id,
       reportId: reportId,
@@ -420,22 +365,16 @@ router.post("/:email/notify_admin", auth, async (req, res) => {
       });
     }
 
-    // Agar already notification hai aur deny false hai -> dobara na banao
-    if (existingNotification) {
-      return res.status(200).json({
-        message: "Notification already exists",
-        notification: existingNotification,
-      });
-    }
-
-    // Naya notification create karo
+    // 👇 Save admin_message from request body
+    console.log(admin_message,'this is Admin')
     const newNotification = new Notification({
       user: user._id,
       reportId,
       message,
       timestamp,
       userName,
-      deny: false, // default false
+      deny: false,
+      admin_message: admin_message
     });
 
     await newNotification.save();
@@ -449,7 +388,6 @@ router.post("/:email/notify_admin", auth, async (req, res) => {
     res.status(500).json({ message: "Server error" });
   }
 });
-
 
 // for deny
 router.put("/:email/deny", auth, async (req, res) => {

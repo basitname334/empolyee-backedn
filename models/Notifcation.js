@@ -8,7 +8,7 @@ const notificationSchema = new mongoose.Schema({
   reportId: { type: String, required: false }, // Link to specific report
   read: { type: Boolean, default: false },
   deny: { type: Boolean, default: false },
-
+  admin_message: { type: String, default: "" }, 
 })
 
 module.exports = mongoose.model('Notification', notificationSchema);
