@@ -44,8 +44,7 @@ const server = http.createServer(app);
 const allowedOrigins = ['http://localhost:3000', 'https://emp-health-frontend.vercel.app', 'http://192.168.0.105:3000'];
 app.use(cors({
   origin: (origin, callback) => {
-    console.log('Request Origin:', origin); // Debug the origin
-    
+    console.log('Request Origin:', origin);
     if (!origin || allowedOrigins.includes(origin) || /^https:\/\/emp-health-frontend-.*\.vercel\.app$/.test(origin)) {
       callback(null, true);
     } else {
