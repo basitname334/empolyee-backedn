@@ -10,8 +10,8 @@ const http = require('http');
 const jwt = require('jsonwebtoken');
 const bcrypt = require('bcryptjs');
 const mongoose = require('mongoose');
-const  documentRoutes =  require("./routes/document");
-const  postRoutes  =  require("./routes/posts");
+const documentRoutes = require("./routes/document");
+const postRoutes = require("./routes/posts");
 const { createCipheriv } = require('crypto');
 const path = require("path");
 // Models
@@ -40,7 +40,9 @@ connectDB();
 const app = express();
 const server = http.createServer(app);
 
-const allowedOrigins = ['http://localhost:3000', 'https://emp-health-frontend.vercel.app','http://192.168.0.105:3000'];
+const allowedOrigins = ['http://localhost:3000', 'https://emp-health-frontend.vercel.app', 'http://192.168.0.105:3000'];
+
+// Updated CORS configuration with more logging and options handling
 app.use(cors({
   origin: (origin, callback) => {
     console.log('Request Origin:', origin); // Debug the origin
@@ -52,8 +54,14 @@ app.use(cors({
       callback(new Error('Not allowed by CORS'));
     }
   },
-  credentials: true
+  methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
+  allowedHeaders: ['Content-Type', 'Authorization'],
+  credentials: true,
+  optionsSuccessStatus: 200 // Some legacy browsers (IE11, various SmartTVs) choke on 204
 }));
+
+// Pre-flight OPTIONS handler for all routes (to ensure CORS preflights work)
+app.options('*', cors());
 
 app.use(helmet());
 app.use(express.json());
@@ -69,6 +77,279 @@ const validateRequest = (req, res, next) => {
 };
 
 app.get('/', (req, res) => res.send('CORS Configured!'));
+
+// Test route to verify CORS and server
+app.get('/api/test', (req, res) => {
+  res.status(200).json({ message: 'Test endpoint working, CORS enabled' });
+});
+
+// Move custom /api routes here to take precedence over mounted routers
+app.get('/api/all-doctors', async (req, res) => {
+  try {
+    console.log('GET /api/all-doctors - Fetching doctors...');
+    const doctors = await User.find({ role: 'doctor' }).select('-password'); // Exclude sensitive fields
+    console.log('GET /api/all-doctors - Doctors found:', doctors.length);
+    res.status(200).json({ doctors });
+  } catch (error) {
+    console.error('Error in GET /api/all-doctors:', error);
+    res.status(500).json({ message: 'Failed to fetch doctors', error: error.message });
+  }
+});
+
+app.get('/api/reports/all', auth, async (req, res) => {
+  try {
+    console.log('GET /api/reports/all - User:', req.user);
+    
+    const reports = await Report.aggregate([
+      { $sort: { createdAt: -1 } }, // optional
+      {
+        $lookup: {
+          from: 'users',
+          localField: 'user',
+          foreignField: '_id',
+          as: 'user'
+        }
+      },
+      { $unwind: '$user' },
+      {
+        $project: {
+          _id: 1,
+          title: 1,
+          description: 1,
+          createdAt: 1,
+          'user.name': 1,
+          'user.email': 1
+        }
+      }
+    ], { allowDiskUse: true });
+
+    res.set('Cache-Control', 'no-cache');
+    res.status(200).json({ reports });
+
+  } catch (error) {
+    console.error('Error in GET /api/reports/all:', error);
+    res.status(500).json({ message: 'Failed to fetch reports', error: error.message });
+  }
+});
+
+app.post('/api/report', auth, validateRequest, async (req, res) => {
+  try {
+    console.log('POST /api/report - Request body:', req.body, 'User:', req.user);
+
+    if (!req.user || !req.user.userId) {
+      console.error('POST /api/report - Missing or invalid user data');
+      return res.status(401).json({ success: false, message: 'User not authenticated' });
+    }
+
+    if (!mongoose.Types.ObjectId.isValid(req.user.userId)) {
+      console.error('POST /api/report - Invalid userId:', req.user.userId);
+      return res.status(400).json({ success: false, message: 'Invalid user ID format' });
+    }
+
+    let {
+      title,
+      type,
+      date,
+      time,
+      reportToHR,
+      anonymous,
+      location,
+      description,
+      involvedParties
+    } = req.body;
+
+    if (!Array.isArray(involvedParties)) {
+      involvedParties = [];
+    }
+
+    const allowedTypes = ['hazard', 'safety', 'incident'];
+
+    const missingFields = [];
+    if (!title) missingFields.push('title');
+    if (!type) missingFields.push('type');
+    else if (!allowedTypes.includes(type)) {
+      console.error('POST /api/report - Invalid type:', type);
+      return res.status(400).json({ success: false, message: `Invalid 'type' value. Allowed: ${allowedTypes.join(', ')}` });
+    }
+    if (!date) missingFields.push('date');
+    if (!time) missingFields.push('time');
+    if (!location) missingFields.push('location');
+    if (!description) missingFields.push('description');
+
+    if (missingFields.length > 0) {
+      console.error('POST /api/report - Missing fields:', missingFields);
+      return res.status(400).json({ success: false, message: `Missing required fields: ${missingFields.join(', ')}` });
+    }
+
+    const report = new Report({
+      title,
+      type,
+      date,
+      time,
+      reportToHR: Boolean(reportToHR),
+      anonymous: Boolean(anonymous),
+      location,
+      description,
+      involvedParties,
+      user: req.user.userId,
+      status: 'pending',
+    });
+
+    console.log('POST /api/report - Saving report:', report);
+    await report.save();
+    console.log('POST /api/report - Report saved successfully:', report);
+
+    res.status(201).json({ success: true, message: 'Report submitted successfully', data: report });
+  } catch (error) {
+    console.error('Error in POST /api/report:', error.message, error.stack);
+    res.status(500).json({ success: false, message: 'Failed to create report', error: error.message });
+  }
+});
+
+app.post('/api/appointments', auth, validateRequest, async (req, res) => {
+  try {
+    console.log('POST /api/appointments - Request body:', req.body, 'User:', req.user);
+    const { day, date, time, type, doctorName, avatarSrc, userId } = req.body;
+    if (!day || !date || !time || !type || !doctorName || !avatarSrc || !userId) {
+      return res.status(400).json({ message: 'All fields are required including userId.' });
+    }
+    if (!mongoose.Types.ObjectId.isValid(userId)) {
+      console.error('POST /api/appointments - Invalid userId:', userId);
+      return res.status(400).json({ message: 'Invalid userId format' });
+    }
+    const appointment = new Appointment({ day, date, time, type, doctorName, avatarSrc, user: userId });
+    await appointment.save();
+    await User.findByIdAndUpdate(userId, { $push: { appointments: appointment._id } });
+    res.status(201).json({ message: 'Appointment created successfully', appointment });
+  } catch (error) {
+    console.error('Error in POST /api/appointments:', error);
+    res.status(500).json({ message: 'Failed to create appointment', error: error.message });
+  }
+});
+
+app.get('/api/appointments', async (req, res) => {
+  try {
+    const { userId } = req.query;
+    const query = userId ? { user: userId } : {};
+    const appointments = await Appointment.find(query).populate('user', 'name email role');
+    res.status(200).json({ appointments });
+  } catch (error) {
+    console.error('Error in GET /api/appointments:', error);
+    res.status(500).json({ message: 'Failed to fetch appointments', error: error.message });
+  }
+});
+
+app.post('/api/polls', validateRequest, async (req, res) => {
+  try {
+    console.log('POST /api/polls - Request body:', req.body);
+    const { question, choices } = req.body;
+    if (!question || !Array.isArray(choices) || choices.length < 2) {
+      return res.status(400).json({ message: 'Question and at least 2 choices are required.' });
+    }
+    const formattedChoices = choices.map(choice => ({ text: choice, votes: 0 }));
+    const poll = new Poll({ question, choices: formattedChoices });
+    await poll.save();
+    res.status(201).json({ message: 'Poll created successfully', poll });
+  } catch (error) {
+    console.error('Error in POST /api/polls:', error);
+    res.status(500).json({ message: 'Failed to create poll', error: error.message });
+  }
+});
+
+app.post('/api/add_poll', validateRequest, async (req, res) => {
+  try {
+    console.log('POST /api/add_poll - Request body:', req.body);
+    const { question, choices } = req.body;
+    if (!question || !Array.isArray(choices) || choices.length < 2) {
+      return res.status(400).json({ message: 'Question and at least 2 choices are required.' });
+    }
+    const formattedChoices = choices.map(choice => ({ text: choice, votes: 0 }));
+    const poll = new Poll({ question, choices: formattedChoices });
+    await poll.save();
+    console.log('POST /api/add_poll - Poll saved successfully:', poll);
+    res.status(201).json({ message: 'Poll created successfully', poll });
+  } catch (error) {
+    console.error('Error in POST /api/add_poll:', error);
+    res.status(500).json({ message: 'Failed to create poll', error: error.message });
+  }
+});
+
+app.get('/api/polls', async (req, res) => {
+  try {
+    const polls = await Poll.find();
+    res.status(200).json({ polls });
+  } catch (error) {
+    console.error('Error in GET /api/polls:', error);
+    res.status(500).json({ message: 'Failed to fetch polls', error: error.message });
+  }
+});
+
+app.post('/api/calls', auth, async (req, res) => {
+  try {
+    console.log('POST /api/calls - Request body:', req.body, 'User:', req.user);
+    const { recipientId } = req.body;
+    if (!recipientId) {
+      return res.status(400).json({ message: 'Recipient ID is required' });
+    }
+    const call = new Call({ caller: req.user.userId, recipient: recipientId });
+    await call.save();
+    res.status(201).json({ message: 'Call initiated', call });
+  } catch (error) {
+    console.error('Error in POST /api/calls:', error);
+    res.status(500).json({ message: 'Failed to initiate call', error: error.message });
+  }
+});
+
+app.post('/:userId/schedule', async (req, res) => {
+  try {
+    const { date, startTime, endTime, breaks } = req.body; // Destructure directly from req.body
+    console.log('Received schedule data:', { date, startTime, endTime, breaks }); // Log incoming data
+
+    // Validate input data
+    if (!date || !startTime || !endTime) {
+      return res.status(400).json({ message: 'Date, start time, and end time are required' });
+    }
+
+    const user = await User.findById(req.params.userId);
+    if (!user) return res.status(404).json({ message: 'User not found' });
+
+    // Prepare the update object
+    const updateData = {
+      workingHours: {
+        start: startTime,
+        end: endTime,
+        breaks: breaks || [],
+        date,
+      },
+      $push: {
+        schedule: {
+          date,
+          startTime,
+          endTime,
+          breaks: breaks || [],
+        },
+      },
+    };
+
+    // Update the user document without running full validation
+    await User.findByIdAndUpdate(
+      req.params.userId,
+      updateData,
+      { new: true, runValidators: false } // Disable validation for this update
+    );
+
+    res.status(200).json({ message: 'Schedule updated successfully' });
+  } catch (error) {
+    console.error('Error in schedule update:', error);
+    res.status(500).json({ message: error.message });
+  }
+});
+
+app.get('/api/challenges', (req, res) => {
+  res.status(200).json({ message: 'Challenges endpoint', challenges: [] });
+});
+
+// Mount other routes after custom /api routes to avoid conflicts
 app.use('/api/auth', authRoutes);
 app.use('/api', challengeRoutes);
 app.use('/api', doctorRoutes);
@@ -80,17 +361,17 @@ app.use('/api/documents', (req, res, next) => {
   next();
 });
 app.use('/api/posts', postRoutes);
-
 app.use("/api/documents", documentRoutes);
-app.get('/api/challenges', (req, res) => {
-  res.status(200).json({ message: 'Challenges endpoint', challenges: [] });
+
+app.use('/api/protected', auth, (req, res) => {
+  res.status(200).json({ message: 'You are logged in and can access this protected route.' });
 });
 
+app.get('/health', (req, res) => {
+  res.status(200).json({ status: 'ok', message: 'Server is running' });
+});
 
-
-
-// for  zegoCloud
-
+// ZegoCloud token generation (unchanged)
 const APP_ID = 1757000422;
 const SERVER_SECRET = "0ce7e80431c85f491e586b683d3737b4";
 
@@ -250,282 +531,12 @@ app.get("/api/zego/token", (req, res) => {
   }
 });
 
-// Backend: routes/auth.js (or wherever the endpoint is defined)
-app.post('/:userId/schedule', async (req, res) => {
-  try {
-    const { date, startTime, endTime, breaks } = req.body; // Destructure directly from req.body
-    console.log('Received schedule data:', { date, startTime, endTime, breaks }); // Log incoming data
-
-    // Validate input data
-    if (!date || !startTime || !endTime) {
-      return res.status(400).json({ message: 'Date, start time, and end time are required' });
-    }
-
-    const user = await User.findById(req.params.userId);
-    if (!user) return res.status(404).json({ message: 'User not found' });
-
-   
-
-    // Prepare the update object
-    const updateData = {
-      workingHours: {
-        start: startTime,
-        end: endTime,
-        breaks: breaks || [],
-        date,
-
-      },
-      $push: {
-        schedule: {
-          date,
-          startTime,
-          endTime,
-          breaks: breaks || [],
-        },
-      },
-    };
-
-    // Update the user document without running full validation
-    await User.findByIdAndUpdate(
-      req.params.userId,
-      updateData,
-      { new: true, runValidators: false } // Disable validation for this update
-    );
-
-    res.status(200).json({ message: 'Schedule updated successfully' });
-  } catch (error) {
-    console.error('Error in schedule update:', error);
-    res.status(500).json({ message: error.message });
-  }
-});
-
-app.get('/api/reports/all', auth, async (req, res) => {
-  try {
-    console.log('GET /api/reports/all - User:', req.user);
-    
-    const reports = await Report.aggregate([
-      { $sort: { createdAt: -1 } }, // optional
-      {
-        $lookup: {
-          from: 'users',
-          localField: 'user',
-          foreignField: '_id',
-          as: 'user'
-        }
-      },
-      { $unwind: '$user' },
-      {
-        $project: {
-          _id: 1,
-          title: 1,
-          description: 1,
-          createdAt: 1,
-          'user.name': 1,
-          'user.email': 1
-        }
-      }
-    ], { allowDiskUse: true });
-
-    res.set('Cache-Control', 'no-cache');
-    res.status(200).json({ reports });
-
-  } catch (error) {
-    console.error('Error in GET /api/reports/all:', error);
-    res.status(500).json({ message: 'Failed to fetch reports', error: error.message });
-  }
-});
-
-
-app.post('/api/report', auth, validateRequest, async (req, res) => {
-  try {
-    console.log('POST /api/report - Request body:', req.body, 'User:', req.user);
-
-    if (!req.user || !req.user.userId) {
-      console.error('POST /api/report - Missing or invalid user data');
-      return res.status(401).json({ success: false, message: 'User not authenticated' });
-    }
-
-    if (!mongoose.Types.ObjectId.isValid(req.user.userId)) {
-      console.error('POST /api/report - Invalid userId:', req.user.userId);
-      return res.status(400).json({ success: false, message: 'Invalid user ID format' });
-    }
-
-    let {
-      title,
-      type,
-      date,
-      time,
-      reportToHR,
-      anonymous,
-      location,
-      description,
-      involvedParties
-    } = req.body;
-
-    if (!Array.isArray(involvedParties)) {
-      involvedParties = [];
-    }
-
-    const allowedTypes = ['hazard', 'safety', 'incident'];
-
-    const missingFields = [];
-    if (!title) missingFields.push('title');
-    if (!type) missingFields.push('type');
-    else if (!allowedTypes.includes(type)) {
-      console.error('POST /api/report - Invalid type:', type);
-      return res.status(400).json({ success: false, message: `Invalid 'type' value. Allowed: ${allowedTypes.join(', ')}` });
-    }
-    if (!date) missingFields.push('date');
-    if (!time) missingFields.push('time');
-    if (!location) missingFields.push('location');
-    if (!description) missingFields.push('description');
-
-    if (missingFields.length > 0) {
-      console.error('POST /api/report - Missing fields:', missingFields);
-      return res.status(400).json({ success: false, message: `Missing required fields: ${missingFields.join(', ')}` });
-    }
-
-    const report = new Report({
-      title,
-      type,
-      date,
-      time,
-      reportToHR: Boolean(reportToHR),
-      anonymous: Boolean(anonymous),
-      location,
-      description,
-      involvedParties,
-      user: req.user.userId,
-      status: 'pending',
-    });
-
-    console.log('POST /api/report - Saving report:', report);
-    await report.save();
-    console.log('POST /api/report - Report saved successfully:', report);
-
-    res.status(201).json({ success: true, message: 'Report submitted successfully', data: report });
-  } catch (error) {
-    console.error('Error in POST /api/report:', error.message, error.stack);
-    res.status(500).json({ success: false, message: 'Failed to create report', error: error.message });
-  }
-});
-
-app.use('/api/protected', auth, (req, res) => {
-  res.status(200).json({ message: 'You are logged in and can access this protected route.' });
-});
-
-app.get('/health', (req, res) => {
-  res.status(200).json({ status: 'ok', message: 'Server is running' });
-});
-
-app.post('/api/appointments', auth, validateRequest, async (req, res) => {
-  try {
-    console.log('POST /api/appointments - Request body:', req.body, 'User:', req.user);
-    const { day, date, time, type, doctorName, avatarSrc, userId } = req.body;
-    if (!day || !date || !time || !type || !doctorName || !avatarSrc || !userId) {
-      return res.status(400).json({ message: 'All fields are required including userId.' });
-    }
-    if (!mongoose.Types.ObjectId.isValid(userId)) {
-      console.error('POST /api/appointments - Invalid userId:', userId);
-      return res.status(400).json({ message: 'Invalid userId format' });
-    }
-    const appointment = new Appointment({ day, date, time, type, doctorName, avatarSrc, user: userId });
-    await appointment.save();
-    await User.findByIdAndUpdate(userId, { $push: { appointments: appointment._id } });
-    res.status(201).json({ message: 'Appointment created successfully', appointment });
-  } catch (error) {
-    console.error('Error in POST /api/appointments:', error);
-    res.status(500).json({ message: 'Failed to create appointment', error: error.message });
-  }
-});
-
-app.get('/api/appointments', async (req, res) => {
-  try {
-    const { userId } = req.query;
-    const query = userId ? { user: userId } : {};
-    const appointments = await Appointment.find(query).populate('user', 'name email role');
-    res.status(200).json({ appointments });
-  } catch (error) {
-    console.error('Error in GET /api/appointments:', error);
-    res.status(500).json({ message: 'Failed to fetch appointments', error: error.message });
-  }
-});
-
-app.get('/api/all-doctors', async (req, res) => {
-  try {
-    const doctors = await User.find({ role: 'doctor' });
-    res.status(200).json({ doctors });
-  } catch (error) {
-    console.error('Error in GET /api/all-doctors:', error);
-    res.status(500).json({ message: 'Failed to fetch doctors', error: error.message });
-  }
-});
-
-app.post('/api/polls', validateRequest, async (req, res) => {
-  try {
-    console.log('POST /api/polls - Request body:', req.body);
-    const { question, choices } = req.body;
-    if (!question || !Array.isArray(choices) || choices.length < 2) {
-      return res.status(400).json({ message: 'Question and at least 2 choices are required.' });
-    }
-    const formattedChoices = choices.map(choice => ({ text: choice, votes: 0 }));
-    const poll = new Poll({ question, choices: formattedChoices });
-    await poll.save();
-    res.status(201).json({ message: 'Poll created successfully', poll });
-  } catch (error) {
-    console.error('Error in POST /api/polls:', error);
-    res.status(500).json({ message: 'Failed to create poll', error: error.message });
-  }
-});
-
-app.post('/api/add_poll', validateRequest, async (req, res) => {
-  try {
-    console.log('POST /api/add_poll - Request body:', req.body);
-    const { question, choices } = req.body;
-    if (!question || !Array.isArray(choices) || choices.length < 2) {
-      return res.status(400).json({ message: 'Question and at least 2 choices are required.' });
-    }
-    const formattedChoices = choices.map(choice => ({ text: choice, votes: 0 }));
-    const poll = new Poll({ question, choices: formattedChoices });
-    await poll.save();
-    console.log('POST /api/add_poll - Poll saved successfully:', poll);
-    res.status(201).json({ message: 'Poll created successfully', poll });
-  } catch (error) {
-    console.error('Error in POST /api/add_poll:', error);
-    res.status(500).json({ message: 'Failed to create poll', error: error.message });
-  }
-});
-
-app.get('/api/polls', async (req, res) => {
-  try {
-    const polls = await Poll.find();
-    res.status(200).json({ polls });
-  } catch (error) {
-    console.error('Error in GET /api/polls:', error);
-    res.status(500).json({ message: 'Failed to fetch polls', error: error.message });
-  }
-});
-
-app.post('/api/calls', auth, async (req, res) => {
-  try {
-    console.log('POST /api/calls - Request body:', req.body, 'User:', req.user);
-    const { recipientId } = req.body;
-    if (!recipientId) {
-      return res.status(400).json({ message: 'Recipient ID is required' });
-    }
-    const call = new Call({ caller: req.user.userId, recipient: recipientId });
-    await call.save();
-    res.status(201).json({ message: 'Call initiated', call });
-  } catch (error) {
-    console.error('Error in POST /api/calls:', error);
-    res.status(500).json({ message: 'Failed to initiate call', error: error.message });
-  }
-});
-
+// Catch-all for undefined routes
 app.use((req, res) => {
   res.status(404).json({ message: 'API endpoint not found' });
 });
 
+// Global error handler
 app.use((err, req, res, next) => {
   console.error('Global error handler:', err);
   res.status(500).json({
