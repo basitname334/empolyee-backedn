@@ -42,6 +42,8 @@ const app = express();
 const server = http.createServer(app);
 
 const allowedOrigins = ['http://localhost:3000', 'https://emp-health-frontend.vercel.app', 'http://192.168.0.105:3000'];
+
+// Enhanced CORS configuration
 app.use(cors({
   origin: (origin, callback) => {
     console.log('Request Origin:', origin);
@@ -52,8 +54,13 @@ app.use(cors({
       callback(new Error('Not allowed by CORS'));
     }
   },
+  methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'], // Explicitly allow OPTIONS
+  allowedHeaders: ['Content-Type', 'Authorization'], // Allow common headers
   credentials: true
 }));
+
+// Handle preflight OPTIONS requests for all routes
+app.options('*', cors()); // Respond to all OPTIONS requests
 
 app.use(helmet());
 app.use(express.json());
