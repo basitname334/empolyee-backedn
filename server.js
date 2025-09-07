@@ -10,8 +10,8 @@ const http = require('http');
 const jwt = require('jsonwebtoken');
 const bcrypt = require('bcryptjs');
 const mongoose = require('mongoose');
-const  documentRoutes =  require("./routes/document");
-const  postRoutes  =  require("./routes/posts");
+const documentRoutes = require("./routes/document");
+const postRoutes = require("./routes/posts");
 const { createCipheriv } = require('crypto');
 const path = require("path");
 // Models
@@ -34,13 +34,14 @@ dotenv.config();
 
 // Debug: Log environment variables (avoid logging sensitive data in production)
 console.log('JWT_SECRET loaded:', !!process.env.JWT_SECRET);
+console.log('HF_API_KEY loaded:', !!process.env.HF_API_KEY); // Added for Hugging Face API key
 
 connectDB();
 
 const app = express();
 const server = http.createServer(app);
 
-const allowedOrigins = ['http://localhost:3000', 'https://emp-health-frontend.vercel.app','http://192.168.0.105:3000'];
+const allowedOrigins = ['http://localhost:3000', 'https://emp-health-frontend.vercel.app', 'http://192.168.0.105:3000'];
 app.use(cors({
   origin: (origin, callback) => {
     console.log('Request Origin:', origin); // Debug the origin
@@ -86,11 +87,62 @@ app.get('/api/challenges', (req, res) => {
   res.status(200).json({ message: 'Challenges endpoint', challenges: [] });
 });
 
+// New Hugging Face API Proxy Endpoint
+const axios = require('axios'); // Add axios dependency
 
+// Retry logic for handling timeouts
+const retry = async (fn, retries = 3, delay = 1000) => {
+  for (let i = 0; i < retries; i++) {
+    try {
+      return await fn();
+    } catch (error) {
+      if (i === retries - 1) throw error;
+      await new Promise(resolve => setTimeout(resolve, delay));
+    }
+  }
+};
 
+app.post('/api/hf-chat', async (req, res) => {
+  try {
+    console.log('POST /api/hf-chat - Request body:', req.body);
+    const { input } = req.body;
+    if (!input) {
+      return res.status(400).json({ message: 'Input is required' });
+    }
 
-// for  zegoCloud
+    const HF_API_KEY = process.env.HF_API_KEY;
+    const HF_MODEL = 'mistralai/Mistral-7B-Instruct-v0.2';
+    const systemPrompt = `You are a highly experienced and empathetic medical doctor.
+Your primary goal is to help users navigate the services provided on a website using the provided data,
+and to provide accurate medical advice, diagnose symptoms, and suggest treatments while maintaining a compassionate tone.
+Use the provided data for navigation questions and your medical knowledge for general queries.`;
+    const prompt = `<s>[INST] ${systemPrompt} ${input} [/INST]`;
 
+    const response = await retry(() =>
+      axios.post(
+        `https://api-inference.huggingface.co/models/${HF_MODEL}`,
+        {
+          inputs: prompt,
+          parameters: { max_new_tokens: 400, temperature: 0.7, return_full_text: false },
+        },
+        {
+          headers: {
+            Authorization: `Bearer ${HF_API_KEY}`,
+            'Content-Type': 'application/json',
+          },
+          timeout: 60000, // 60-second timeout
+        }
+      )
+    );
+
+    res.status(200).json({ message: response.data[0]?.generated_text?.trim() || 'No response' });
+  } catch (error) {
+    console.error('Error in POST /api/hf-chat:', error);
+    res.status(500).json({ message: 'Failed to fetch response from Hugging Face API', error: error.message });
+  }
+});
+
+// for zegoCloud
 const APP_ID = 1757000422;
 const SERVER_SECRET = "0ce7e80431c85f491e586b683d3737b4";
 
@@ -264,8 +316,6 @@ app.post('/:userId/schedule', async (req, res) => {
     const user = await User.findById(req.params.userId);
     if (!user) return res.status(404).json({ message: 'User not found' });
 
-   
-
     // Prepare the update object
     const updateData = {
       workingHours: {
@@ -273,7 +323,6 @@ app.post('/:userId/schedule', async (req, res) => {
         end: endTime,
         breaks: breaks || [],
         date,
-
       },
       $push: {
         schedule: {
@@ -334,7 +383,6 @@ app.get('/api/reports/all', auth, async (req, res) => {
     res.status(500).json({ message: 'Failed to fetch reports', error: error.message });
   }
 });
-
 
 app.post('/api/report', auth, validateRequest, async (req, res) => {
   try {
