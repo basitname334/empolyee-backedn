@@ -373,7 +373,7 @@ app.post('/api/report', auth, validateRequest, async (req, res) => {
     if (!type) missingFields.push('type');
     else if (!allowedTypes.includes(type)) {
       console.error('POST /api/report - Invalid type:', type);
-      return res.status(400).json({ success: false, message: Invalid 'type' value. Allowed: ${allowedTypes.join(', ')} });
+      return res.status(400).json({ success: false, message: `Invalid 'type' value. Allowed: ${allowedTypes.join(', ')}` });
     }
     if (!date) missingFields.push('date');
     if (!time) missingFields.push('time');
@@ -382,7 +382,7 @@ app.post('/api/report', auth, validateRequest, async (req, res) => {
 
     if (missingFields.length > 0) {
       console.error('POST /api/report - Missing fields:', missingFields);
-      return res.status(400).json({ success: false, message: Missing required fields: ${missingFields.join(', ')} });
+      return res.status(400).json({ success: false, message: `Missing required fields: ${missingFields.join(', ')}` });
     }
 
     const report = new Report({
@@ -601,11 +601,11 @@ io.on('connection', (socket) => {
 
 const PORT = process.env.PORT || 5000;
 server.listen(PORT, () => {
-  console.log(Server running on port ${PORT});
+  console.log(`Server running on port ${PORT}`);
   if (app._router && app._router.stack) {
     app._router.stack.forEach((middleware) => {
       if (middleware.route && middleware.route.path && middleware.route.stack[0]) {
-        console.log(Route registered: ${middleware.route.stack[0].method.toUpperCase()} ${middleware.route.path});
+        console.log(`Route registered: ${middleware.route.stack[0].method.toUpperCase()} ${middleware.route.path}`);
       }
     });
   } else {
