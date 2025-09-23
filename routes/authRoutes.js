@@ -15,6 +15,13 @@ const {
   acceptTerms,
   determineQuestionnaire
 } = require('../controllers/authController');
+const {
+  storeOnboardingStep,
+  storeMultipleOnboardingSteps,
+  getUserOnboardingProgress,
+  getOnboardingStep,
+  deleteOnboardingStep
+} = require('../controllers/onboardingController');
 require('dotenv').config();
 /// Validate environment variables
 // if (!process.env.EMAIL_HOST || !process.env.EMAIL_PORT || !process.env.EMAIL_USER || !process.env.EMAIL_PASSWORD) {
@@ -54,6 +61,7 @@ router.post('/register', register);
 router.post('/login', login);
 router.post('/verify-otp', verifyOTP);
 router.post('/resend-otp', resendOTP);
+router.post('/store', storeOnboardingStep);
 
 // Forgot Password
 // Forgot Password

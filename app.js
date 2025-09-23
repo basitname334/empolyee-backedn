@@ -11,6 +11,7 @@ const logger = require('./utils/logger');
 
 // Route files
 const authRoutes = require('./routes/authRoutes');
+const onboardingRoutes = require('./routes/onboardingRoutes');
 
 // Initialize app
 const app = express();
@@ -51,6 +52,7 @@ app.use(cors());
 
 // Mount routers
 app.use('/api/auth', authRoutes);
+app.use('/api/onboarding', onboardingRoutes);
 
 // Error handling middleware
 app.use((err, req, res, next) => {
