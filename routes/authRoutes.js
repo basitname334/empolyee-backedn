@@ -17,6 +17,8 @@ const {
 } = require('../controllers/authController');
 const {
   storeOnboardingStep,
+  hasOnboardingStep,
+  getUserOnboardingSteps,
   storeMultipleOnboardingSteps,
   getUserOnboardingProgress,
   getOnboardingStep,
@@ -62,6 +64,8 @@ router.post('/login', login);
 router.post('/verify-otp', verifyOTP);
 router.post('/resend-otp', resendOTP);
 router.post('/store', storeOnboardingStep);
+router.get('/check_onboard', hasOnboardingStep);
+router.get('/get_onboard_data', getUserOnboardingSteps)
 
 // Forgot Password
 // Forgot Password

@@ -232,6 +232,65 @@ const storeMultipleOnboardingSteps = async (req, res) => {
   }
 };
 
+// ...existing code...
+
+const mongoose = require('mongoose');
+
+const hasOnboardingStep = async (req, res) => {
+  try {
+    const { userId } = req.query;
+    if (!userId) {
+      return res.status(400).json({ success: false, message: 'User ID is required' });
+    }
+
+    // ✅ Validate ObjectId first
+    if (!mongoose.Types.ObjectId.isValid(userId)) {
+      return res.status(200).json({ success: true, exists: false });
+    }
+
+    const user = await User.findById(userId);
+    if (!user) {
+      return res.status(200).json({ success: true, exists: false });
+    }
+
+    const stepExists = await OnboardingStep.exists({ userId });
+    return res.status(200).json({ success: true, exists: !!stepExists });
+  } catch (error) {
+    console.error('Error checking onboarding step:', error);
+    return res.status(500).json({ success: false, message: 'Internal server error' });
+  }
+};
+
+
+
+
+const getUserOnboardingSteps = async (req, res) => {
+  try {
+        const { userId } = req.query;
+
+    if (!userId) {
+      return res.status(400).json({ success: false, message: 'User ID is required' });
+    }
+
+    // Validate ObjectId
+    if (!mongoose.Types.ObjectId.isValid(userId)) {
+      return res.status(200).json({ success: true, steps: [] });
+    }
+
+    const user = await User.findById(userId);
+    if (!user) {
+      return res.status(200).json({ success: true, steps: [] });
+    }
+
+    const steps = await OnboardingStep.find({ userId: userId });
+    return res.status(200).json({ success: true, steps });
+  } catch (error) {
+    console.error('Error getting user onboarding steps:', error);
+    return res.status(500).json({ success: false, message: 'Internal server error' });
+  }
+};
+
+
 // Get user's onboarding progress
 const getUserOnboardingProgress = async (req, res) => {
   try {
@@ -381,5 +440,7 @@ module.exports = {
   storeMultipleOnboardingSteps,
   getUserOnboardingProgress,
   getOnboardingStep,
-  deleteOnboardingStep
+  deleteOnboardingStep,
+  hasOnboardingStep,
+  getUserOnboardingSteps
 };
