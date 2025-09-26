@@ -3,7 +3,19 @@ const dotenv = require('dotenv');
 const cors = require('cors');
 const helmet = require('helmet');
 const morgan = require('morgan');
-const connectDB = require('./config/db');
+const { connectDB, isDBConnected } = require('./config/db');
+
+// Middleware to check database connection before processing requests
+const checkDBConnection = (req, res, next) => {
+  if (!isDBConnected()) {
+    return res.status(503).json({
+      success: false,
+      message: 'Database connection not available. Please try again in a moment.',
+      error: 'Database not connected'
+    });
+  }
+  next();
+};
 const { verifyEmailConnection } = require('./services/emailService');
 const { Server } = require('socket.io');
 const http = require('http');
@@ -69,7 +81,7 @@ const validateRequest = (req, res, next) => {
 };
 
 app.get('/', (req, res) => res.send('CORS Configured!'));
-app.use('/api/auth', authRoutes);
+app.use('/api/auth', checkDBConnection, authRoutes);
 app.use('/api', challengeRoutes);
 app.use('/api', doctorRoutes);
 app.use('/api', reportRoutes);
@@ -415,7 +427,36 @@ app.use('/api/protected', auth, (req, res) => {
 });
 
 app.get('/health', (req, res) => {
-  res.status(200).json({ status: 'ok', message: 'Server is running' });
+  const dbStatus = mongoose.connection.readyState;
+  const dbStates = {
+    0: 'disconnected',
+    1: 'connected',
+    2: 'connecting',
+    3: 'disconnecting'
+  };
+  
+  res.status(200).json({ 
+    status: 'ok', 
+    message: 'Server is running',
+    database: {
+      status: dbStates[dbStatus],
+      connected: isDBConnected(),
+      host: mongoose.connection.host || 'Not connected',
+      port: mongoose.connection.port || 'Not connected',
+      name: mongoose.connection.name || 'Not connected'
+    }
+  });
+});
+
+// Debug endpoint to check connection status
+app.get('/debug/db-status', (req, res) => {
+  res.status(200).json({
+    isConnected: isDBConnected(),
+    mongooseReadyState: mongoose.connection.readyState,
+    mongooseHost: mongoose.connection.host,
+    mongoosePort: mongoose.connection.port,
+    mongooseName: mongoose.connection.name
+  });
 });
 
 app.post('/api/appointments', auth, validateRequest, async (req, res) => {

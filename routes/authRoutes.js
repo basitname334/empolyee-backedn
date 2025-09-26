@@ -4,6 +4,7 @@ const nodemailer = require('nodemailer');
 const crypto = require('crypto');
 const bcrypt = require('bcryptjs');
 const User = require('../models/User');
+const Poll = require('../models/PollSchema');
 const validator = require('validator');
 const { 
   register, 
@@ -15,6 +16,15 @@ const {
   acceptTerms,
   determineQuestionnaire
 } = require('../controllers/authController');
+const {
+  storeOnboardingStep,
+  hasOnboardingStep,
+  getUserOnboardingSteps,
+  storeMultipleOnboardingSteps,
+  getUserOnboardingProgress,
+  getOnboardingStep,
+  deleteOnboardingStep
+} = require('../controllers/onboardingController');
 require('dotenv').config();
 /// Validate environment variables
 // if (!process.env.EMAIL_HOST || !process.env.EMAIL_PORT || !process.env.EMAIL_USER || !process.env.EMAIL_PASSWORD) {
@@ -54,6 +64,9 @@ router.post('/register', register);
 router.post('/login', login);
 router.post('/verify-otp', verifyOTP);
 router.post('/resend-otp', resendOTP);
+router.post('/store', storeOnboardingStep);
+router.get('/check_onboard', hasOnboardingStep);
+router.get('/get_onboard_data', getUserOnboardingSteps)
 
 // Forgot Password
 // Forgot Password
@@ -107,7 +120,7 @@ router.post('/forgot-password', async (req, res) => {
 
 
     // Use environment variable for frontend URL
-    const frontendUrl = process.env.FRONTEND_URL || 'https://emp-health-frontend.vercel.app';
+    const frontendUrl = process.env.FRONTEND_URL || 'http://localhost:3000';
     const resetUrl = `${frontendUrl}/reset-password/${resetToken}`;
 
     const mailOptions = {
@@ -432,6 +445,127 @@ router.get('/login', (req, res) => {
     success: false,
     message: 'Invalid method. Use POST /api/auth/login to authenticate.' 
   });
+});
+
+// Poll response endpoint
+router.post('/poll-choose', async (req, res) => {
+  try {
+    const { userId, pollId, selectedChoice } = req.body;
+
+    // Validate required fields
+    if (!userId || !pollId || !selectedChoice) {
+      return res.status(400).json({
+        success: false,
+        message: 'userId, pollId, and selectedChoice are required'
+      });
+    }
+
+    // Check if user exists
+    const user = await User.findById(userId);
+    if (!user) {
+      return res.status(404).json({
+        success: false,
+        message: 'User not found'
+      });
+    }
+
+    // Check if poll exists
+    const poll = await Poll.findById(pollId);
+    if (!poll) {
+      return res.status(404).json({
+        success: false,
+        message: 'Poll not found'
+      });
+    }
+
+    // Check if choice exists in poll
+    const choiceExists = poll.choices.some(choice => 
+      choice.text === selectedChoice || choice._id.toString() === selectedChoice
+    );
+    
+    if (!choiceExists) {
+      return res.status(400).json({
+        success: false,
+        message: 'Invalid choice for this poll'
+      });
+    }
+
+    // Initialize pollResponses if it doesn't exist
+    if (!user.pollResponses) {
+      user.pollResponses = new Map();
+    }
+
+    // Store the response
+    user.pollResponses.set(pollId.toString(), {
+      pollId: pollId,
+      selectedChoice: selectedChoice,
+      respondedAt: new Date()
+    });
+
+    // Save user with updated poll responses
+    await user.save();
+
+    res.status(200).json({
+      success: true,
+      message: 'Poll response saved successfully',
+      data: {
+        pollId: pollId,
+        selectedChoice: selectedChoice,
+        respondedAt: new Date()
+      }
+    });
+
+  } catch (error) {
+    console.error('Error saving poll response:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Internal server error',
+      error: error.message
+    });
+  }
+});
+
+// Get user's poll responses
+router.get('/poll-responses/:userId', async (req, res) => {
+  try {
+    const { userId } = req.params;
+
+    // Check if user exists
+    const user = await User.findById(userId);
+    if (!user) {
+      return res.status(404).json({
+        success: false,
+        message: 'User not found'
+      });
+    }
+
+    // Get user's poll responses
+    const pollResponses = user.pollResponses || new Map();
+    
+    // Convert Map to Object for JSON response
+    const responsesObject = {};
+    pollResponses.forEach((value, key) => {
+      responsesObject[key] = {
+        pollId: value.pollId,
+        selectedChoice: value.selectedChoice,
+        respondedAt: value.respondedAt
+      };
+    });
+
+    res.status(200).json({
+      success: true,
+      message: 'Poll responses fetched successfully',
+      data: responsesObject
+    });
+
+  } catch (error) {
+    console.error('Error fetching poll responses:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Internal server error',
+      error: error.message
+    });
+  }
 });
 
 router.get('/test', (req, res) => {

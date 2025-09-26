@@ -13,7 +13,6 @@ passwordChangedAt: Date,
   email: { 
     type: String, 
     required: true, 
-    unique: true,
     trim: true,
     lowercase: true
   },
@@ -195,6 +194,23 @@ workingHours: {
     ref: 'Appointment'
   }],
   
+  // Poll responses
+  pollResponses: {
+    type: Map,
+    of: {
+      pollId: {
+        type: mongoose.Schema.Types.ObjectId,
+        ref: 'Poll'
+      },
+      selectedChoice: String,
+      respondedAt: {
+        type: Date,
+        default: Date.now
+      }
+    },
+    default: new Map()
+  },
+  
   createdAt: { 
     type: Date, 
     default: Date.now 
@@ -227,7 +243,7 @@ UserSchema.pre('save', function(next) {
 });
 
 // Index for faster queries
-UserSchema.index({ email: 1 });
+UserSchema.index({ email: 1 }, { unique: true }); // Unique index for email
 UserSchema.index({ role: 1 });
 UserSchema.index({ department: 1 }); // For filtering doctors by department
 UserSchema.index({ isAvailable: 1 }); // For finding available doctors
