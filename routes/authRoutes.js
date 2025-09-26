@@ -15,15 +15,6 @@ const {
   acceptTerms,
   determineQuestionnaire
 } = require('../controllers/authController');
-const {
-  storeOnboardingStep,
-  hasOnboardingStep,
-  getUserOnboardingSteps,
-  storeMultipleOnboardingSteps,
-  getUserOnboardingProgress,
-  getOnboardingStep,
-  deleteOnboardingStep
-} = require('../controllers/onboardingController');
 require('dotenv').config();
 /// Validate environment variables
 // if (!process.env.EMAIL_HOST || !process.env.EMAIL_PORT || !process.env.EMAIL_USER || !process.env.EMAIL_PASSWORD) {
@@ -63,9 +54,6 @@ router.post('/register', register);
 router.post('/login', login);
 router.post('/verify-otp', verifyOTP);
 router.post('/resend-otp', resendOTP);
-router.post('/store', storeOnboardingStep);
-router.get('/check_onboard', hasOnboardingStep);
-router.get('/get_onboard_data', getUserOnboardingSteps)
 
 // Forgot Password
 // Forgot Password
@@ -119,7 +107,7 @@ router.post('/forgot-password', async (req, res) => {
 
 
     // Use environment variable for frontend URL
-    const frontendUrl = process.env.FRONTEND_URL || 'http://localhost:3000';
+    const frontendUrl = process.env.FRONTEND_URL || 'https://emp-health-frontend.vercel.app';
     const resetUrl = `${frontendUrl}/reset-password/${resetToken}`;
 
     const mailOptions = {
